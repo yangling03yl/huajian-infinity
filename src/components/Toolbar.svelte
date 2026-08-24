@@ -4,11 +4,19 @@
   import { FONT_SIZES, DEFAULT_FONT_SIZE } from '../lib/font-size';
   import type { EditorInstance } from '../lib/editor';
 
-  let { editor }: { editor: EditorInstance | null } = $props();
+  interface Props {
+    editor: EditorInstance | null;
+    snapshotsOpen: boolean;
+    onCreateSnapshot: () => void;
+    onToggleSnapshots: () => void;
+    onExport: (kind: 'md' | 'pdf') => void;
+  }
+  let { editor, snapshotsOpen, onCreateSnapshot, onToggleSnapshots, onExport }: Props = $props();
 
   let sel = $state({ heading: 0, fontSize: null as number | null });
   let showCustom = $state(false);
   let customSize = $state('');
+  let exportOpen = $state(false);
 
   const currentSize = $derived(sel.fontSize ?? DEFAULT_FONT_SIZE);
   const isCustom = $derived(sel.fontSize != null && !(FONT_SIZES as readonly number[]).includes(sel.fontSize));
@@ -42,6 +50,11 @@
       editor?.setFontSize(n);
       showCustom = false;
     }
+  }
+
+  function pickExport(kind: 'md' | 'pdf'): void {
+    exportOpen = false;
+    onExport(kind);
   }
 </script>
 
@@ -92,6 +105,27 @@
       <button class="mini-btn" onclick={applyCustom}>确定</button>
     </span>
   {/if}
+
+  <div class="actions">
+    <button class="action-btn" title="复制快照：保存当前正文为快照并进入对比" disabled={!editor} onclick={onCreateSnapshot}>⧉ 复制快照</button>
+    <button
+      class="action-btn"
+      class:on={snapshotsOpen}
+      title="快照记录：查看/恢复不同版本"
+      disabled={!editor}
+      onclick={onToggleSnapshots}
+    >⧗ 快照</button>
+    <div class="export-wrap">
+      <button class="action-btn" title="导出（仅正文）" disabled={!editor} onclick={() => (exportOpen = !exportOpen)}>⭳ 导出</button>
+      {#if exportOpen}
+        <div class="export-mask" onclick={() => (exportOpen = false)}></div>
+        <div class="export-menu">
+          <button onclick={() => pickExport('md')}>导出 Markdown (.md)</button>
+          <button onclick={() => pickExport('pdf')}>导出 PDF (.pdf)</button>
+        </div>
+      {/if}
+    </div>
+  </div>
 </div>
 
 <style>
@@ -157,6 +191,70 @@
   }
   .custom input {
     width: 72px;
+  }
+  .actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+  }
+  .action-btn {
+    font: inherit;
+    font-size: 13px;
+    padding: 3px 10px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--bg);
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .action-btn:hover:not(:disabled),
+  .action-btn.on {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .action-btn:disabled {
+    opacity: 0.45;
+    cursor: default;
+  }
+  .export-wrap {
+    position: relative;
+  }
+  .export-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 59;
+  }
+  .export-menu {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    min-width: 190px;
+    padding: 4px;
+    background: var(--bg-panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 6px 22px rgba(0, 0, 0, 0.18);
+  }
+  .export-menu button {
+    font: inherit;
+    font-size: 13px;
+    text-align: left;
+    padding: 7px 12px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .export-menu button:hover {
+    background: var(--bg-hover);
+    color: var(--accent);
   }
   .mini-btn {
     font-size: 12px;

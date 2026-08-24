@@ -5,6 +5,7 @@ use tauri::{Emitter, Manager};
 mod box_store;
 mod commands;
 mod models;
+mod note_doc;
 mod settings;
 
 use box_store::BoxStore;
@@ -55,6 +56,12 @@ pub fn run() {
             commands::delete_note,
             commands::set_note_color,
             commands::save_box,
+            commands::create_snapshot,
+            commands::list_snapshots,
+            commands::read_snapshot,
+            commands::apply_snapshot,
+            commands::delete_snapshot,
+            commands::write_bytes,
             commands::get_settings,
             commands::set_appearance,
             commands::reorder_boxes,

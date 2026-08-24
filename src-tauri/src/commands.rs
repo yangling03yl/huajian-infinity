@@ -1,10 +1,12 @@
 use std::path::Path;
 use std::sync::Mutex;
 
+use base64::engine::general_purpose::STANDARD as B64;
+use base64::Engine as _;
 use tauri::{Manager, State};
 
 use crate::box_store::BoxStore;
-use crate::models::{BoxInfo, NoteMeta};
+use crate::models::{BoxInfo, NoteMeta, SnapshotMeta};
 use crate::settings::{self, AppSettings, AppState};
 
 fn store<'a>(state: &'a State<'_, Mutex<BoxStore>>) -> Result<std::sync::MutexGuard<'a, BoxStore>, String> {
@@ -148,6 +150,69 @@ pub fn save_box(state: State<Mutex<BoxStore>>, box_id: String) -> Result<(), Str
     let s = store(&state)?;
     let b = s.get(&box_id)?;
     BoxStore::repack(b)
+}
+
+/// 复制当前正文为快照
+#[tauri::command]
+pub fn create_snapshot(
+    state: State<Mutex<BoxStore>>,
+    box_id: String,
+    note_id: String,
+    label: Option<String>,
+) -> Result<SnapshotMeta, String> {
+    store(&state)?.create_snapshot(&box_id, &note_id, label)
+}
+
+/// 列出全部快照版本
+#[tauri::command]
+pub fn list_snapshots(
+    state: State<Mutex<BoxStore>>,
+    box_id: String,
+    note_id: String,
+) -> Result<Vec<SnapshotMeta>, String> {
+    store(&state)?.list_snapshots(&box_id, &note_id)
+}
+
+/// 读取某个快照的内容
+#[tauri::command]
+pub fn read_snapshot(
+    state: State<Mutex<BoxStore>>,
+    box_id: String,
+    note_id: String,
+    snapshot_id: String,
+) -> Result<String, String> {
+    store(&state)?.read_snapshot(&box_id, &note_id, &snapshot_id)
+}
+
+/// 用快照内容替换正文（恢复版本），返回新正文
+#[tauri::command]
+pub fn apply_snapshot(
+    state: State<Mutex<BoxStore>>,
+    box_id: String,
+    note_id: String,
+    snapshot_id: String,
+) -> Result<String, String> {
+    store(&state)?.apply_snapshot(&box_id, &note_id, &snapshot_id)
+}
+
+/// 删除某个快照版本
+#[tauri::command]
+pub fn delete_snapshot(
+    state: State<Mutex<BoxStore>>,
+    box_id: String,
+    note_id: String,
+    snapshot_id: String,
+) -> Result<(), String> {
+    store(&state)?.delete_snapshot(&box_id, &note_id, &snapshot_id)
+}
+
+/// 导出：将 base64 编码的字节写入指定路径（md / PDF）
+#[tauri::command]
+pub fn write_bytes(path: String, data_base64: String) -> Result<(), String> {
+    let bytes = B64
+        .decode(data_base64.as_bytes())
+        .map_err(|e| format!("解码数据失败: {e}"))?;
+    std::fs::write(&path, bytes).map_err(|e| format!("写入文件失败: {e}"))
 }
 
 /// 读取用户设置（主题、明暗、侧栏宽度、上次会话花匣列表）

@@ -25,3 +25,12 @@ pub struct BoxInfo {
     pub name: String,
     pub note_count: usize,
 }
+
+/// 快照元信息（记录在 md 文件目录段中）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnapshotMeta {
+    pub id: String,
+    pub version: u32,
+    pub label: String,
+    pub created_at: String,
+}

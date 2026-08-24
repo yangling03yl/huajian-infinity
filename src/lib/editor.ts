@@ -11,6 +11,8 @@ import {
 export interface EditorInstance {
   /** 同步获取当前 markdown（用于切换/关闭时 flush） */
   getMarkdown: () => string;
+  /** 整体替换当前内容（用于恢复快照版本） */
+  setMarkdown: (md: string) => void;
   /** 在光标处插入文本 */
   insertText: (text: string) => void;
   /** 设置当前块标题级别，0 = 正文 */
@@ -30,15 +32,17 @@ function countChars(text: string): number {
  * 创建 Milkdown 所见即所得编辑器
  * @param container 挂载容器
  * @param initialMd 初始 markdown
- * @param onChange 内容变化回调（已去抖）
+ * @param onChange 内容变化回调（已去抖，用于自动保存）
+ * @param onLive 内容变化即时回调（不去抖，用于快照实时差异）
  */
 export async function createEditor(
   container: HTMLElement,
   initialMd: string,
   onChange: (md: string) => void,
+  onLive?: (md: string) => void,
 ): Promise<EditorInstance> {
   const [
-    { Editor, rootCtx, defaultValueCtx, serializerCtx, editorViewCtx, commandsCtx },
+    { Editor, rootCtx, defaultValueCtx, serializerCtx, editorViewCtx, commandsCtx, parserCtx },
     { commonmark, headingKeymap, paragraphKeymap, wrapInHeadingCommand, turnIntoTextCommand },
     { gfm },
     { nord },
@@ -83,6 +87,7 @@ export async function createEditor(
       });
       ctx.get(listenerCtx).markdownUpdated((_ctx, md) => {
         lastMd = md;
+        onLive?.(md);
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => onChange(md), AUTO_SAVE_MS);
       });
@@ -131,6 +136,14 @@ export async function createEditor(
       });
       lastMd = md;
       return md;
+    },
+    setMarkdown: (md: string) => {
+      editor.action((ctx) => {
+        const view = ctx.get(editorViewCtx);
+        const doc = ctx.get(parserCtx)(md);
+        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, doc));
+      });
+      lastMd = md;
     },
     insertText: (text: string) => {
       editor.action((ctx) => {

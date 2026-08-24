@@ -35,3 +35,11 @@ export interface AppSettings {
   /** 已打开花匣的有序路径（启动时按此顺序自动打开） */
   boxes: string[];
 }
+
+/** 快照元信息（记录在 md 文件目录段中） */
+export interface SnapshotMeta {
+  id: string;
+  version: number;
+  label: string;
+  created_at: string;
+}
