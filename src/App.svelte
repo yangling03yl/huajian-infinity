@@ -1,0 +1,262 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { open as openDialog } from '@tauri-apps/plugin-dialog';
+  import Sidebar from './components/Sidebar.svelte';
+  import TabBar from './components/TabBar.svelte';
+  import EditorPane from './components/EditorPane.svelte';
+  import StatusBar from './components/StatusBar.svelte';
+  import NewBoxModal from './components/NewBoxModal.svelte';
+  import ThemePicker from './components/ThemePicker.svelte';
+  import { api, errMsg } from './lib/api';
+  import { openBox, statusMsg } from './lib/stores';
+  import { themeById } from './lib/themes';
+
+  const win = getCurrentWindow();
+
+  let sidebarW = $state(300);
+  let showNewBox = $state(false);
+  let isFullscreen = $state(false);
+  let themeId = $state('warm-paper');
+  let isDark = $state(false);
+  let showThemes = $state(false);
+  let renameTarget = $state<{ boxId: string; noteId: string } | null>(null);
+  let drag = $state(false);
+
+  function applyTheme(id: string, dark: boolean): void {
+    const t = themeById(id);
+    const vars = dark ? t.dark : t.light;
+    for (const [k, v] of Object.entries(vars)) {
+      document.documentElement.style.setProperty(k, v);
+    }
+    document.documentElement.classList.toggle('dark', dark);
+  }
+
+  function persistAppearance(): void {
+    void api.setAppearance(themeId, isDark, sidebarW);
+  }
+
+  function setDark(dark: boolean): void {
+    isDark = dark;
+    applyTheme(themeId, dark);
+    persistAppearance();
+  }
+
+  function pickTheme(id: string): void {
+    themeId = id;
+    applyTheme(id, isDark);
+    persistAppearance();
+  }
+
+  function requestRename(boxId: string, noteId: string): void {
+    renameTarget = { boxId, noteId };
+  }
+
+  function renameDone(): void {
+    renameTarget = null;
+  }
+
+  async function openHxPath(path: string): Promise<void> {
+    try {
+      const info = await api.openBox(path);
+      await openBox(info);
+      statusMsg.set(`已打开花匣「${info.name}」`);
+    } catch (e) {
+      statusMsg.set(`打开失败: ${errMsg(e)}`);
+    }
+  }
+
+  async function pickOpenBox(): Promise<void> {
+    try {
+      const path = await openDialog({
+        title: '打开花匣',
+        multiple: false,
+        filters: [{ name: '花匣 (.hxl)', extensions: ['hxl'] }],
+      });
+      if (typeof path === 'string') await openHxPath(path);
+    } catch (e) {
+      statusMsg.set(`打开失败: ${errMsg(e)}`);
+    }
+  }
+
+  async function toggleFullscreen(): Promise<void> {
+    const fs = await win.isFullscreen();
+    await win.setFullscreen(!fs);
+    isFullscreen = !fs;
+  }
+
+  async function toggleMaximize(): Promise<void> {
+    const m = await win.isMaximized();
+    if (m) await win.unmaximize();
+    else await win.maximize();
+  }
+
+  function toggleTheme(): void {
+    setDark(!isDark);
+  }
+
+  function startDrag(): void {
+    drag = true;
+  }
+  function onMove(e: PointerEvent): void {
+    if (!drag) return;
+    sidebarW = Math.min(560, Math.max(180, e.clientX));
+  }
+  function endDrag(): void {
+    drag = false;
+    persistAppearance();
+  }
+
+  onMount(() => {
+    applyTheme(themeId, isDark);
+
+    void (async () => {
+      let saved: string[] = [];
+      try {
+        const s = await api.getSettings();
+        themeId = s.theme || 'warm-paper';
+        isDark = s.dark;
+        sidebarW = s.sidebar_width || 300;
+        saved = s.boxes;
+        applyTheme(themeId, isDark);
+      } catch (e) {
+        statusMsg.set(`读取设置失败: ${errMsg(e)}`);
+      }
+      for (const p of saved) await openHxPath(p);
+      void api.getStartupHx().then((p) => {
+        if (p) void openHxPath(p);
+      });
+    })();
+
+    const cleanup: (() => void)[] = [];
+
+    void win.listen<string>('open-hx', (e) => {
+      void openHxPath(e.payload);
+    }).then((un) => cleanup.push(un));
+
+    void win
+      .onDragDropEvent((e) => {
+        if (e.payload.type === 'drop') {
+          for (const p of e.payload.paths) {
+            if (p.toLowerCase().endsWith('.hxl')) void openHxPath(p);
+          }
+        }
+      })
+      .then((un) => cleanup.push(un));
+
+    void win.onResized(async () => {
+      isFullscreen = await win.isFullscreen();
+    }).then((un) => cleanup.push(un));
+
+    const keyHandler = (e: KeyboardEvent) => {
+      if (e.key === 'F11') {
+        e.preventDefault();
+        void toggleFullscreen();
+      }
+    };
+    window.addEventListener('keydown', keyHandler);
+
+    return () => {
+      for (const un of cleanup) un();
+      window.removeEventListener('keydown', keyHandler);
+    };
+  });
+</script>
+
+<div class="app" onpointermove={onMove} onpointerup={endDrag}>
+  <div class="main">
+    <aside class="sidebar-outer" style="width:{sidebarW}px">
+      <Sidebar
+        onNewBox={() => (showNewBox = true)}
+        onOpenBox={() => void pickOpenBox()}
+        onRenameRequest={requestRename}
+      />
+    </aside>
+    <div class="resizer" class:dragging={drag} onpointerdown={startDrag}></div>
+    <section class="editor-area">
+      <div class="header-row">
+        <TabBar {renameTarget} onRenameDone={renameDone} />
+        <div class="win-controls">
+          <button class="icon-btn" title="界面样式" onclick={() => (showThemes = !showThemes)}>◑</button>
+          <button class="icon-btn" title="主题切换" onclick={toggleTheme}>◐</button>
+          <button class="icon-btn" title="最大化/还原" onclick={() => void toggleMaximize()}>▢</button>
+          <button class="icon-btn" title="全屏 (F11)" onclick={() => void toggleFullscreen()}>{isFullscreen ? '⤡' : '⛶'}</button>
+        </div>
+      </div>
+      <EditorPane />
+      <StatusBar />
+    </section>
+  </div>
+</div>
+
+{#if showNewBox}
+  <NewBoxModal onClose={() => (showNewBox = false)} />
+{/if}
+
+{#if showThemes}
+  <div class="picker-mask" role="button" tabindex="-1" onclick={() => (showThemes = false)}></div>
+  <ThemePicker current={themeId} onPick={pickTheme} onClose={() => (showThemes = false)} />
+{/if}
+
+<style>
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: var(--bg);
+  }
+  .main {
+    display: flex;
+    flex: 1;
+    min-height: 0;
+  }
+  .sidebar-outer {
+    flex: none;
+    min-width: 180px;
+    overflow: hidden;
+  }
+  .resizer {
+    width: 4px;
+    cursor: col-resize;
+    background: transparent;
+    flex: none;
+    transition: background 0.1s;
+    margin-left: -2px;
+    z-index: 10;
+  }
+  .resizer:hover,
+  .resizer.dragging {
+    background: var(--accent);
+  }
+  .editor-area {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .header-row {
+    display: flex;
+    flex: none;
+    align-items: stretch;
+  }
+  .header-row :global(.tabbar) {
+    flex: 1;
+    min-width: 0;
+  }
+  .win-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0 8px;
+    background: var(--bg-panel);
+    border-bottom: 1px solid var(--border);
+    border-left: 1px solid var(--border);
+    flex: none;
+    position: relative;
+  }
+  .picker-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 55;
+  }
+</style>

@@ -1,0 +1,192 @@
+:root {
+  color-scheme: light;
+  --font-ui: 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Source Han Sans SC',
+    system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'Cascadia Mono', monospace;
+
+  --bg: #faf9f7;
+  --bg-panel: #f4f2ee;
+  --bg-sidebar: #efece6;
+  --bg-hover: rgba(0, 0, 0, 0.055);
+  --bg-active: rgba(0, 0, 0, 0.09);
+  --border: #e3dfd7;
+  --text: #2f2b26;
+  --text-dim: #8a8378;
+  --accent: #b4753f;
+  --danger: #c0392b;
+}
+
+html.dark {
+  color-scheme: dark;
+  --bg: #1e1c19;
+  --bg-panel: #242220;
+  --bg-sidebar: #2a2825;
+  --bg-hover: rgba(255, 255, 255, 0.06);
+  --bg-active: rgba(255, 255, 255, 0.1);
+  --border: #3a3733;
+  --text: #e8e2d8;
+  --text-dim: #928a7c;
+  --accent: #d99a63;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  user-select: none;
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 5px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-dim);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+button {
+  font-family: inherit;
+  font-size: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+
+input {
+  font-family: inherit;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  transition: background 0.12s, color 0.12s;
+  flex: none;
+}
+.icon-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 500;
+  transition: filter 0.12s;
+}
+.primary-btn:hover {
+  filter: brightness(1.1);
+}
+
+.ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  color: var(--text);
+  background: var(--bg-panel);
+  transition: background 0.12s;
+}
+.ghost-btn:hover {
+  background: var(--bg-hover);
+}
+
+/* ---- 模态框 ---- */
+.modal-mask {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+.modal {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  min-width: 320px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.25);
+}
+.modal h3 {
+  margin: 0 0 14px;
+  font-size: 16px;
+}
+.modal input[type='text'] {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  outline: none;
+  margin-bottom: 14px;
+}
+.modal input[type='text']:focus {
+  border-color: var(--accent);
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* ---- 编辑器 ---- */
+.editor-container .ProseMirror:focus,
+.editor-container .ProseMirror:focus-visible {
+  outline: none;
+}
+
+/* ---- 编辑器正文随主题配色 ---- */
+.editor-container.prose,
+.editor-container.prose p,
+.editor-container.prose li {
+  color: var(--text);
+}
+.editor-container.prose h1,
+.editor-container.prose h2,
+.editor-container.prose h3,
+.editor-container.prose h4,
+.editor-container.prose h5,
+.editor-container.prose h6 {
+  color: var(--text);
+}
+.editor-container.prose a {
+  color: var(--accent);
+}

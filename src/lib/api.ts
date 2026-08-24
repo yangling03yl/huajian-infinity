@@ -1,0 +1,33 @@
+import { invoke } from '@tauri-apps/api/core';
+import type { AppSettings, BoxInfo, NoteMeta } from './types';
+
+export function errMsg(e: unknown): string {
+  if (typeof e === 'string') return e;
+  if (e instanceof Error) return e.message;
+  return String(e);
+}
+
+export const api = {
+  openBox: (path: string) => invoke<BoxInfo>('open_box', { path }),
+  createBox: (path: string, name: string) => invoke<BoxInfo>('create_box', { path, name }),
+  closeBox: (boxId: string) => invoke<void>('close_box', { boxId }),
+  listNotes: (boxId: string) => invoke<NoteMeta[]>('list_notes', { boxId }),
+  readNote: (boxId: string, noteId: string) => invoke<string>('read_note', { boxId, noteId }),
+  writeNote: (boxId: string, noteId: string, content: string) =>
+    invoke<void>('write_note', { boxId, noteId, content }),
+  createNote: (boxId: string, title: string, color: string) =>
+    invoke<NoteMeta>('create_note', { boxId, title, color }),
+  renameNote: (boxId: string, noteId: string, title: string) =>
+    invoke<void>('rename_note', { boxId, noteId, title }),
+  deleteNote: (boxId: string, noteId: string) => invoke<void>('delete_note', { boxId, noteId }),
+  setNoteColor: (boxId: string, noteId: string, color: string) =>
+    invoke<void>('set_note_color', { boxId, noteId, color }),
+  saveBox: (boxId: string) => invoke<void>('save_box', { boxId }),
+  getSettings: () => invoke<AppSettings>('get_settings'),
+  setAppearance: (theme: string, dark: boolean, sidebarWidth: number) =>
+    invoke<void>('set_appearance', { theme, dark, sidebarWidth }),
+  reorderBoxes: (order: string[]) => invoke<void>('reorder_boxes', { order }),
+  getStartupHx: () => invoke<string | null>('get_startup_hx'),
+  revealInFolder: (path: string) =>
+    invoke<void>('reveal_in_folder', { path }).catch(() => {}),
+};
