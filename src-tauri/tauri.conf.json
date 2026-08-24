@@ -38,6 +38,9 @@
       }
     },
     "category": "Utility",
+    "license": "MulanPSL-2.0",
+    "licenseFile": "licenses/MulanPSL2.0.txt",
+    "copyright": "Copyright (c) 2026 huajian",
     "shortDescription": "花笺infinity — 所见即所得 Markdown 笔记",
     "longDescription": "花笺infinity：基于花匣(.hxl)打包的所见即所得 Markdown 笔记应用。用户数据保存于 ~/.config/com.huajian.app/。",
     "icon": [

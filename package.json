@@ -9,7 +9,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri"
   },
-  "license": "MIT",
+  "license": "MulanPSL-2.0",
   "dependencies": {
     "@milkdown/core": "^7.17.0",
     "@milkdown/ctx": "^7.22.0",
