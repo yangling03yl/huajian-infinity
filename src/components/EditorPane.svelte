@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-  import { activeTab, tabs, setTabDirty, saveState, statusMsg, boxById } from '../lib/stores';
+  import { activeTab, tabs, setTabDirty, saveState, boxById, showHint } from '../lib/stores';
   import { api, errMsg } from '../lib/api';
   import { createEditor, type EditorInstance } from '../lib/editor';
   import { buildPdf, bytesToBase64, strToBase64, safeFileName } from '../lib/export';
@@ -45,7 +45,6 @@
       saveState.set('saved');
     } catch (e) {
       saveState.set('error');
-      statusMsg.set(`保存失败: ${errMsg(e)}`);
     }
   }
 
@@ -99,12 +98,11 @@
           saveState.set('saved');
         } catch (e) {
           saveState.set('error');
-          statusMsg.set(`保存失败: ${errMsg(e)}`);
         }
       }, onLive);
       saveState.set('saved');
     } catch (e) {
-      statusMsg.set(`读取花笺失败: ${errMsg(e)}`);
+      alert(`读取花笺失败: ${errMsg(e)}`);
     } finally {
       loading = false;
     }
@@ -120,9 +118,8 @@
       const meta = await api.createSnapshot(tab.boxId, tab.noteId, null);
       split = { meta, snapshotMd: md, canMerge: true };
       liveMd = md;
-      statusMsg.set(`已复制快照 v${meta.version}：左右内容相同，修改左侧即可实时查看差异`);
     } catch (e) {
-      statusMsg.set(`复制快照失败: ${errMsg(e)}`);
+      alert(`复制快照失败: ${errMsg(e)}`);
     }
   }
 
@@ -135,7 +132,7 @@
       split = { meta, snapshotMd: md, canMerge: false };
       liveMd = editor.getMarkdown();
     } catch (e) {
-      statusMsg.set(`读取快照失败: ${errMsg(e)}`);
+      alert(`读取快照失败: ${errMsg(e)}`);
     }
   }
 
@@ -151,7 +148,6 @@
       liveMd = body;
       split = null;
       saveState.set('saved');
-      statusMsg.set(`已恢复为快照 v${meta.version}（${meta.label}）`);
     } catch (e) {
       alert(errMsg(e));
     }
@@ -163,7 +159,6 @@
     const snap = split;
     split = null;
     await flush();
-    statusMsg.set(`已合并：左侧内容即为正文，快照 v${snap.meta.version} 永久保留`);
   }
 
   /** 放弃左侧修改，恢复为快照内容 */
@@ -174,7 +169,6 @@
     editor.setMarkdown(snap.snapshotMd);
     liveMd = snap.snapshotMd;
     await flush();
-    statusMsg.set(`已放弃修改，正文恢复为快照 v${snap.meta.version}`);
   }
 
   function toggleSnapshots(): void {
@@ -199,7 +193,7 @@
         });
         if (!path) return;
         await api.writeBytes(path, strToBase64(md));
-        statusMsg.set(`已导出 Markdown：${path}`);
+        showHint(`已导出 Markdown：${path}`);
       } else {
         const path = await saveDialog({
           title: '导出 PDF（仅正文）',
@@ -207,13 +201,14 @@
           filters: [{ name: 'PDF', extensions: ['pdf'] }],
         });
         if (!path) return;
-        statusMsg.set('正在生成 PDF…');
+        // buildPdf 首行会 await 字体加载，提示能先绘制出来
+        showHint('正在生成 PDF…');
         const bytes = await buildPdf(md, title);
         await api.writeBytes(path, bytesToBase64(bytes));
-        statusMsg.set(`已导出 PDF：${path}`);
+        showHint(`已导出 PDF：${path}`);
       }
     } catch (e) {
-      statusMsg.set(`导出失败: ${errMsg(e)}`);
+      alert(`导出失败: ${errMsg(e)}`);
     }
   }
 

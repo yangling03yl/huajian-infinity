@@ -7,7 +7,8 @@ use tauri::{Manager, State};
 
 use crate::box_store::BoxStore;
 use crate::models::{BoxInfo, NoteMeta, SnapshotMeta};
-use crate::settings::{self, AppSettings, AppState};
+use crate::pomodoro_stats::{self, PomodoroDayStats, PomodoroStats};
+use crate::settings::{self, AppSettings, AppState, PomodoroSettings};
 
 fn store<'a>(state: &'a State<'_, Mutex<BoxStore>>) -> Result<std::sync::MutexGuard<'a, BoxStore>, String> {
     state.lock().map_err(|_| "内部状态锁定失败".to_string())
@@ -284,4 +285,68 @@ pub fn reveal_in_folder(app: tauri::AppHandle, path: String) -> Result<(), Strin
     app.opener()
         .reveal_item_in_dir(&path)
         .map_err(|e| format!("打开所在文件夹失败: {e}"))
+}
+
+// ---- 番茄钟 ----
+
+fn save_pomodoro_stats(app: &tauri::AppHandle, stats: &State<'_, Mutex<PomodoroStats>>) {
+    if let Ok(s) = stats.lock() {
+        if let Ok(dir) = app.path().app_config_dir() {
+            let _ = pomodoro_stats::save(&dir, &s);
+        }
+    }
+}
+
+/// 保存番茄钟设置（模式、番茄时长、休息时长、循环次数），越界值自动夹取
+#[tauri::command]
+pub fn set_pomodoro_settings(
+    app: tauri::AppHandle,
+    app_state: State<Mutex<AppState>>,
+    mode: String,
+    focus_minutes: u32,
+    break_minutes: u32,
+    loops: u32,
+) -> Result<(), String> {
+    let next = PomodoroSettings {
+        mode,
+        focus_minutes,
+        break_minutes,
+        loops,
+    }
+    .sanitized();
+    if let Ok(mut s) = app_state.lock() {
+        s.settings.pomodoro = next;
+    }
+    save_settings(&app, &app_state);
+    Ok(())
+}
+
+/// 记录一个完成的番茄（秒）。日期由后端按本地时区确定，跨午夜的番茄归入完成当日。
+#[tauri::command]
+pub fn record_pomodoro(
+    app: tauri::AppHandle,
+    stats: State<Mutex<PomodoroStats>>,
+    seconds: u64,
+    mode: String,
+) -> Result<(), String> {
+    let (date, at) = pomodoro_stats::now_local();
+    let recorded = stats
+        .lock()
+        .map_err(|_| "内部状态锁定失败".to_string())?
+        .record(&date, &at, seconds, &mode);
+    if !recorded {
+        return Err("番茄时长不合法，未计入统计".to_string());
+    }
+    save_pomodoro_stats(&app, &stats);
+    Ok(())
+}
+
+/// 读取某年某月（month 为 1-12）的番茄统计
+#[tauri::command]
+pub fn get_pomodoro_stats(
+    stats: State<Mutex<PomodoroStats>>,
+    year: i32,
+    month: u32,
+) -> Vec<PomodoroDayStats> {
+    stats.lock().map(|s| s.month(year, month)).unwrap_or_default()
 }

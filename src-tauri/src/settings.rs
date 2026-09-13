@@ -15,6 +15,34 @@ pub struct AppSettings {
     /// 已打开花匣的有序路径（启动时按此顺序自动打开）
     #[serde(default)]
     pub boxes: Vec<String>,
+    /// 番茄钟设置
+    #[serde(default)]
+    pub pomodoro: PomodoroSettings,
+}
+
+/// 番茄钟计时模式：标准（倒计时）
+pub const POMODORO_MODE_STANDARD: &str = "standard";
+/// 番茄钟计时模式：正向（正计时，手动结束）
+pub const POMODORO_MODE_FORWARD: &str = "forward";
+
+pub const MIN_FOCUS_MINUTES: u32 = 1;
+pub const MAX_FOCUS_MINUTES: u32 = 180;
+pub const MIN_BREAK_MINUTES: u32 = 0;
+pub const MAX_BREAK_MINUTES: u32 = 60;
+pub const MIN_LOOPS: u32 = 1;
+pub const MAX_LOOPS: u32 = 12;
+
+/// 番茄钟设置：模式、单个番茄时长、循环内相邻番茄之间的休息时长、一次会话的番茄个数
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct PomodoroSettings {
+    #[serde(default = "default_pomodoro_mode")]
+    pub mode: String,
+    #[serde(default = "default_focus_minutes")]
+    pub focus_minutes: u32,
+    #[serde(default = "default_break_minutes")]
+    pub break_minutes: u32,
+    #[serde(default = "default_loops")]
+    pub loops: u32,
 }
 
 fn default_theme() -> String {
@@ -25,6 +53,46 @@ fn default_sidebar_width() -> u32 {
     300
 }
 
+fn default_pomodoro_mode() -> String {
+    POMODORO_MODE_STANDARD.into()
+}
+
+fn default_focus_minutes() -> u32 {
+    25
+}
+
+fn default_break_minutes() -> u32 {
+    5
+}
+
+fn default_loops() -> u32 {
+    4
+}
+
+impl Default for PomodoroSettings {
+    fn default() -> Self {
+        Self {
+            mode: default_pomodoro_mode(),
+            focus_minutes: default_focus_minutes(),
+            break_minutes: default_break_minutes(),
+            loops: default_loops(),
+        }
+    }
+}
+
+impl PomodoroSettings {
+    /// 把外部传入的值夹取到合法范围，未知模式回落到标准模式
+    pub fn sanitized(mut self) -> Self {
+        if self.mode != POMODORO_MODE_FORWARD {
+            self.mode = POMODORO_MODE_STANDARD.into();
+        }
+        self.focus_minutes = self.focus_minutes.clamp(MIN_FOCUS_MINUTES, MAX_FOCUS_MINUTES);
+        self.break_minutes = self.break_minutes.clamp(MIN_BREAK_MINUTES, MAX_BREAK_MINUTES);
+        self.loops = self.loops.clamp(MIN_LOOPS, MAX_LOOPS);
+        self
+    }
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -32,6 +100,7 @@ impl Default for AppSettings {
             dark: false,
             sidebar_width: default_sidebar_width(),
             boxes: Vec::new(),
+            pomodoro: PomodoroSettings::default(),
         }
     }
 }
@@ -81,6 +150,11 @@ mod tests {
         assert!(!s.dark);
         assert_eq!(s.sidebar_width, 300);
         assert!(s.boxes.is_empty());
+        assert_eq!(s.pomodoro, PomodoroSettings::default());
+        assert_eq!(s.pomodoro.mode, POMODORO_MODE_STANDARD);
+        assert_eq!(s.pomodoro.focus_minutes, 25);
+        assert_eq!(s.pomodoro.break_minutes, 5);
+        assert_eq!(s.pomodoro.loops, 4);
 
         // 保存并重新读取
         let mut s2 = AppSettings::default();
@@ -88,6 +162,12 @@ mod tests {
         s2.dark = true;
         s2.sidebar_width = 420;
         s2.boxes = vec!["/a/one.hxl".into(), "/b/two.hxl".into()];
+        s2.pomodoro = PomodoroSettings {
+            mode: POMODORO_MODE_FORWARD.into(),
+            focus_minutes: 50,
+            break_minutes: 10,
+            loops: 3,
+        };
         save(&dir, &s2).unwrap();
 
         let s3 = load(&dir);
@@ -95,7 +175,57 @@ mod tests {
         assert!(s3.dark);
         assert_eq!(s3.sidebar_width, 420);
         assert_eq!(s3.boxes, vec!["/a/one.hxl", "/b/two.hxl"]);
+        assert_eq!(s3.pomodoro, s2.pomodoro);
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 旧版 settings.json（无 pomodoro 字段）必须能读，并补上默认番茄钟设置
+    #[test]
+    fn legacy_settings_without_pomodoro() {
+        let dir = std::env::temp_dir().join("huajian_settings_legacy_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        fs::write(
+            settings_path(&dir),
+            br#"{"theme":"bamboo","dark":true,"sidebar_width":360,"boxes":["/x.hxl"]}"#,
+        )
+        .unwrap();
+
+        let s = load(&dir);
+        assert_eq!(s.theme, "bamboo");
+        assert!(s.dark);
+        assert_eq!(s.sidebar_width, 360);
+        assert_eq!(s.pomodoro, PomodoroSettings::default());
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pomodoro_sanitized_clamps_range() {
+        let s = PomodoroSettings {
+            mode: "unknown".into(),
+            focus_minutes: 0,
+            break_minutes: 999,
+            loops: 0,
+        }
+        .sanitized();
+        assert_eq!(s.mode, POMODORO_MODE_STANDARD);
+        assert_eq!(s.focus_minutes, MIN_FOCUS_MINUTES);
+        assert_eq!(s.break_minutes, MAX_BREAK_MINUTES);
+        assert_eq!(s.loops, MIN_LOOPS);
+
+        let f = PomodoroSettings {
+            mode: POMODORO_MODE_FORWARD.into(),
+            focus_minutes: 400,
+            break_minutes: 0,
+            loops: 99,
+        }
+        .sanitized();
+        assert_eq!(f.mode, POMODORO_MODE_FORWARD);
+        assert_eq!(f.focus_minutes, MAX_FOCUS_MINUTES);
+        assert_eq!(f.break_minutes, 0);
+        assert_eq!(f.loops, MAX_LOOPS);
     }
 }

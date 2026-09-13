@@ -9,7 +9,7 @@
   import NewBoxModal from './components/NewBoxModal.svelte';
   import ThemePicker from './components/ThemePicker.svelte';
   import { api, errMsg } from './lib/api';
-  import { openBox, statusMsg } from './lib/stores';
+  import { openBox } from './lib/stores';
   import { themeById } from './lib/themes';
 
   const win = getCurrentWindow();
@@ -60,9 +60,8 @@
     try {
       const info = await api.openBox(path);
       await openBox(info);
-      statusMsg.set(`已打开花匣「${info.name}」`);
     } catch (e) {
-      statusMsg.set(`打开失败: ${errMsg(e)}`);
+      alert(`打开失败: ${errMsg(e)}`);
     }
   }
 
@@ -75,7 +74,7 @@
       });
       if (typeof path === 'string') await openHxPath(path);
     } catch (e) {
-      statusMsg.set(`打开失败: ${errMsg(e)}`);
+      alert(`打开失败: ${errMsg(e)}`);
     }
   }
 
@@ -120,7 +119,7 @@
         saved = s.boxes;
         applyTheme(themeId, isDark);
       } catch (e) {
-        statusMsg.set(`读取设置失败: ${errMsg(e)}`);
+        alert(`读取设置失败: ${errMsg(e)}`);
       }
       for (const p of saved) await openHxPath(p);
       void api.getStartupHx().then((p) => {

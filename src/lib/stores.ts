@@ -6,7 +6,24 @@ export const boxes = writable<OpenBox[]>([]);
 export const tabs = writable<Tab[]>([]);
 export const activeTab = writable<Tab | null>(null);
 export const saveState = writable<'idle' | 'saving' | 'saved' | 'error'>('idle');
+/** 状态栏提示位：只服务番茄钟（其他业务提示已移除，失败一律走 alert） */
 export const statusMsg = writable('');
+
+/** 状态栏中段提示：进度类信息（如导出），写入后 5 秒自动清空，无内容时不显示 */
+export const statusHint = writable('');
+/** 中段提示停留时长（毫秒） */
+const HINT_MS = 5000;
+let hintTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** 显示一条中段提示；连续调用会重置 5 秒计时，不做排队 */
+export function showHint(text: string): void {
+  statusHint.set(text);
+  if (hintTimer !== null) clearTimeout(hintTimer);
+  hintTimer = setTimeout(() => {
+    hintTimer = null;
+    statusHint.set('');
+  }, HINT_MS);
+}
 export const wordCount = writable(0);
 export const editorSel = writable<{ heading: number; fontSize: number | null }>({ heading: 0, fontSize: null });
 
@@ -42,7 +59,7 @@ export async function refreshNotes(boxId: string): Promise<void> {
       );
     }
   } catch (e) {
-    statusMsg.set(`刷新花笺列表失败: ${e}`);
+    alert(`刷新花笺列表失败: ${e}`);
   }
 }
 

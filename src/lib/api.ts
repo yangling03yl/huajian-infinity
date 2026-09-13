@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppSettings, BoxInfo, NoteMeta, SnapshotMeta } from './types';
+import type { AppSettings, BoxInfo, NoteMeta, PomodoroDayStats, SnapshotMeta } from './types';
 
 export function errMsg(e: unknown): string {
   if (typeof e === 'string') return e;
@@ -42,4 +42,10 @@ export const api = {
   getStartupHx: () => invoke<string | null>('get_startup_hx'),
   revealInFolder: (path: string) =>
     invoke<void>('reveal_in_folder', { path }).catch(() => {}),
+  setPomodoroSettings: (mode: string, focusMinutes: number, breakMinutes: number, loops: number) =>
+    invoke<void>('set_pomodoro_settings', { mode, focusMinutes, breakMinutes, loops }),
+  recordPomodoro: (seconds: number, mode: string) =>
+    invoke<void>('record_pomodoro', { seconds, mode }),
+  getPomodoroStats: (year: number, month: number) =>
+    invoke<PomodoroDayStats[]>('get_pomodoro_stats', { year, month }),
 };

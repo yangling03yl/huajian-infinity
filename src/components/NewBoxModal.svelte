@@ -2,7 +2,6 @@
   import { save } from '@tauri-apps/plugin-dialog';
   import { api, errMsg } from '../lib/api';
   import { openBox } from '../lib/stores';
-  import { statusMsg } from '../lib/stores';
 
   interface Props {
     onClose: () => void;
@@ -24,7 +23,6 @@
       if (!path) return;
       const info = await api.createBox(path, boxName);
       await openBox(info);
-      statusMsg.set(`已创建花匣「${boxName}」`);
       onClose();
     } catch (e) {
       alert(errMsg(e));

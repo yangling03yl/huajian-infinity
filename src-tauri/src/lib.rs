@@ -6,6 +6,7 @@ mod box_store;
 mod commands;
 mod models;
 mod note_doc;
+mod pomodoro_stats;
 mod settings;
 
 use box_store::BoxStore;
@@ -29,6 +30,7 @@ pub fn run() {
                 settings: settings::load(&config_dir),
             };
             app.manage(Mutex::new(state));
+            app.manage(Mutex::new(pomodoro_stats::load(&config_dir)));
             Ok(())
         })
         .plugin(
@@ -67,6 +69,9 @@ pub fn run() {
             commands::reorder_boxes,
             commands::get_startup_hx,
             commands::reveal_in_folder,
+            commands::set_pomodoro_settings,
+            commands::record_pomodoro,
+            commands::get_pomodoro_stats,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
