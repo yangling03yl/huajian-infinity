@@ -34,7 +34,10 @@
     "targets": ["deb"],
     "linux": {
       "deb": {
-        "desktopTemplate": "huajian-infinity.desktop.template"
+        "desktopTemplate": "huajian-infinity.desktop.template",
+        "files": {
+          "/usr/share/doc/huajian-infinity/copyright": "licenses/MulanPSL2.0.txt"
+        }
       }
     },
     "category": "Utility",
