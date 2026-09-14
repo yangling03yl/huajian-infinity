@@ -28,10 +28,15 @@ export interface Tab {
   savedMd: string;
 }
 
+/** 正文宽度模式：left75 靠左 75%（默认）/ full 铺满 / narrow 专注阅读居中 */
+export type WidthMode = 'left75' | 'full' | 'narrow';
+
 export interface AppSettings {
   theme: string;
   dark: boolean;
   sidebar_width: number;
+  /** 正文宽度模式 */
+  width_mode: WidthMode;
   /** 已打开花匣的有序路径（启动时按此顺序自动打开） */
   boxes: string[];
   /** 番茄钟设置 */

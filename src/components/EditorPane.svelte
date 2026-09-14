@@ -292,9 +292,12 @@
     background: var(--bg);
   }
   .editor-container {
-    max-width: 860px;
-    margin: 0 auto;
-    padding: 28px 40px 80px;
+    /* 正文栏：宽度/对齐由 .editor-area 上的变量统一驱动，与工具栏、状态栏共用 */
+    width: var(--editor-col-fill, 100%);
+    max-width: var(--editor-col-max, none);
+    margin-left: auto;
+    margin-right: auto;
+    padding: 28px var(--editor-inset, clamp(16px, 2.4vw, 44px)) 80px;
     min-height: 100%;
     user-select: text;
   }

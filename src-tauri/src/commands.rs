@@ -225,7 +225,7 @@ pub fn get_settings(app_state: State<Mutex<AppState>>) -> AppSettings {
         .unwrap_or_default()
 }
 
-/// 保存界面外观（主题、明暗、侧栏宽度），不涉及花匣列表
+/// 保存界面外观（主题、明暗、侧栏宽度、正文宽度模式），不涉及花匣列表
 #[tauri::command]
 pub fn set_appearance(
     app: tauri::AppHandle,
@@ -233,11 +233,15 @@ pub fn set_appearance(
     theme: String,
     dark: bool,
     sidebar_width: u32,
+    width_mode: String,
 ) -> Result<(), String> {
     if let Ok(mut s) = app_state.lock() {
         s.settings.theme = theme;
         s.settings.dark = dark;
         s.settings.sidebar_width = sidebar_width;
+        s.settings.width_mode = Some(width_mode);
+        // 迁移完成后不再保留旧字段
+        s.settings.full_width = None;
     }
     save_settings(&app, &app_state);
     Ok(())

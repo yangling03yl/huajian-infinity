@@ -36,8 +36,8 @@ export const api = {
   writeBytes: (path: string, dataBase64: string) =>
     invoke<void>('write_bytes', { path, dataBase64 }),
   getSettings: () => invoke<AppSettings>('get_settings'),
-  setAppearance: (theme: string, dark: boolean, sidebarWidth: number) =>
-    invoke<void>('set_appearance', { theme, dark, sidebarWidth }),
+  setAppearance: (theme: string, dark: boolean, sidebarWidth: number, widthMode: string) =>
+    invoke<void>('set_appearance', { theme, dark, sidebarWidth, widthMode }),
   reorderBoxes: (order: string[]) => invoke<void>('reorder_boxes', { order }),
   getStartupHx: () => invoke<string | null>('get_startup_hx'),
   revealInFolder: (path: string) =>

@@ -49,10 +49,30 @@
 
 <aside class="sidebar">
   <header class="sidebar-head">
-    <span class="logo">花笺infinity</span>
+    <span class="logo">花笺<span class="latin">infinity</span></span>
     <div class="head-actions">
       <button class="icon-btn" title="新建花匣" onclick={onNewBox}>＋</button>
-      <button class="icon-btn" title="打开花匣" onclick={onOpenBox}>📂</button>
+      <button class="icon-btn folder-btn" title="打开花匣" onclick={onOpenBox} aria-label="打开花匣">
+        <svg
+          class="folder-icon"
+          viewBox="0 0 24 24"
+          width="18"
+          height="18"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            class="folder-tab"
+            style="fill: var(--folder-tab);"
+            d="M4 4.6h4.2l1.8 2.1H20.4v2.9H4z"
+          />
+          <path
+            class="folder-body"
+            style="fill: var(--folder-body);"
+            d="M4 9.6h16.4v10.6H4z"
+          />
+        </svg>
+      </button>
     </div>
   </header>
 
@@ -101,12 +121,50 @@
   .logo {
     font-size: 17px;
     font-weight: 700;
-    letter-spacing: 2px;
+    letter-spacing: -0.5px;
     color: var(--accent);
+    user-select: none;
+  }
+  /* 拉丁字母字重偏细，收紧一点让「花笺infinity」整体更紧凑 */
+  .logo .latin {
+    letter-spacing: -0.7px;
   }
   .head-actions {
     display: flex;
     gap: 2px;
+  }
+  /* ---- 打开花匣：自绘双色文件夹图标 ---- */
+  .folder-btn {
+    color: var(--accent);
+    --folder-tab: #cba57e;
+    --folder-body: var(--accent);
+  }
+  .folder-btn:hover {
+    color: var(--accent);
+    background: color-mix(in srgb, var(--accent) 16%, transparent);
+  }
+  :global(html.dark) .folder-btn {
+    --folder-tab: #a97c4b;
+  }
+  .folder-icon {
+    display: block;
+    overflow: visible;
+  }
+  .folder-tab,
+  .folder-body {
+    transition: transform 0.16s ease;
+  }
+  /* 前板描边用侧栏底色，切出前后层次 */
+  .folder-body {
+    stroke: var(--bg-sidebar);
+    stroke-width: 0.7;
+    stroke-linejoin: round;
+  }
+  .folder-btn:hover .folder-body {
+    transform: translateY(0.6px);
+  }
+  .folder-btn:active .folder-body {
+    transform: translateY(1.2px);
   }
   .box-list {
     flex: 1;

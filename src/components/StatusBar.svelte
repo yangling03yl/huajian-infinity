@@ -19,7 +19,8 @@
 </script>
 
 <footer class="statusbar">
-  <span class="left" title={activeBox?.info.path}>
+  <div class="statusbar-inner">
+    <span class="left" title={activeBox?.info.path}>
     {#if activeBox}
       <span class="dot" style="background:{$activeTab ? (activeBox.notes.find(n => n.id === $activeTab?.noteId)?.color ?? '#888') : '#888'}"></span>
       {activeBox.info.name}
@@ -41,21 +42,31 @@
     {#if $activeTab}<span class="count" title="汉字、字母、数字、标点各计 1，不含空格换行">{$wordCount} 字</span>{/if}
     {#if saveText}<span class="save-text {saveText}">{saveText}</span>{/if}
     <span class="dim">花笺infinity {ver}</span>
-  </span>
+    </span>
+  </div>
 </footer>
 
 <style>
   .statusbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     height: 26px;
-    padding: 0 12px;
     font-size: 12px;
     background: var(--bg-sidebar);
     border-top: 1px solid var(--border);
     flex: none;
     user-select: none;
+  }
+  /* 内层与正文栏同宽、同内缩、同对齐，保证状态栏和正文边缘重合 */
+  .statusbar-inner {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    height: 100%;
+    width: var(--editor-col-fill, 100%);
+    max-width: var(--editor-col-max, none);
+    margin-left: auto;
+    margin-right: auto;
+    padding: 0 var(--editor-inset, 12px);
+    box-sizing: border-box;
   }
   .left {
     display: flex;

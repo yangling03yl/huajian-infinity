@@ -59,7 +59,8 @@
 </script>
 
 <div class="toolbar">
-  <label class="group" title="标题样式（Ctrl+1~6 标题，Ctrl+0 正文）">
+  <div class="toolbar-inner">
+    <label class="group" title="标题样式（Ctrl+1~6 标题，Ctrl+0 正文）">
     <span class="label">标题</span>
     <select disabled={!editor} value={sel.heading} onchange={onHeadingChange}>
       <option value="0">正文 (Ctrl+0)</option>
@@ -106,38 +107,47 @@
     </span>
   {/if}
 
-  <div class="actions">
-    <button class="action-btn" title="复制快照：保存当前正文为快照并进入对比" disabled={!editor} onclick={onCreateSnapshot}>⧉ 复制快照</button>
-    <button
-      class="action-btn"
-      class:on={snapshotsOpen}
-      title="快照记录：查看/恢复不同版本"
-      disabled={!editor}
-      onclick={onToggleSnapshots}
-    >⧗ 快照</button>
-    <div class="export-wrap">
-      <button class="action-btn" title="导出（仅正文）" disabled={!editor} onclick={() => (exportOpen = !exportOpen)}>⭳ 导出</button>
-      {#if exportOpen}
-        <div class="export-mask" onclick={() => (exportOpen = false)}></div>
-        <div class="export-menu">
-          <button onclick={() => pickExport('md')}>导出 Markdown (.md)</button>
-          <button onclick={() => pickExport('pdf')}>导出 PDF (.pdf)</button>
-        </div>
-      {/if}
+    <div class="actions">
+      <button class="action-btn" title="复制快照：保存当前正文为快照并进入对比" disabled={!editor} onclick={onCreateSnapshot}>⧉ 复制快照</button>
+      <button
+        class="action-btn"
+        class:on={snapshotsOpen}
+        title="快照记录：查看/恢复不同版本"
+        disabled={!editor}
+        onclick={onToggleSnapshots}
+      >⧗ 快照</button>
+      <div class="export-wrap">
+        <button class="action-btn" title="导出（仅正文）" disabled={!editor} onclick={() => (exportOpen = !exportOpen)}>⭳ 导出</button>
+        {#if exportOpen}
+          <div class="export-mask" onclick={() => (exportOpen = false)}></div>
+          <div class="export-menu">
+            <button onclick={() => pickExport('md')}>导出 Markdown (.md)</button>
+            <button onclick={() => pickExport('pdf')}>导出 PDF (.pdf)</button>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 </div>
 
 <style>
   .toolbar {
-    display: flex;
-    align-items: center;
-    gap: 16px;
     flex: none;
-    padding: 6px 16px;
     background: var(--bg-panel);
     border-bottom: 1px solid var(--border);
     user-select: none;
+  }
+  /* 内层与正文栏同宽、同内缩、同对齐，保证工具栏和正文边缘重合 */
+  .toolbar-inner {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    width: var(--editor-col-fill, 100%);
+    max-width: var(--editor-col-max, none);
+    margin-left: auto;
+    margin-right: auto;
+    padding: 6px var(--editor-inset, 16px);
+    box-sizing: border-box;
   }
   .group {
     display: flex;
