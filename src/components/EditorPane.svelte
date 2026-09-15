@@ -292,7 +292,7 @@
     background: var(--bg);
   }
   .editor-container {
-    /* 正文栏：宽度/对齐由 .editor-area 上的变量统一驱动，与工具栏、状态栏共用 */
+    /* 正文栏：宽度/对齐由 .editor-area 上的变量驱动；工具栏与状态栏固定满宽，不随模式变化 */
     width: var(--editor-col-fill, 100%);
     max-width: var(--editor-col-max, none);
     margin-left: auto;

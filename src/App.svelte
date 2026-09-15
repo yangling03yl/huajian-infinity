@@ -37,13 +37,8 @@
     void api.setAppearance(themeId, isDark, sidebarW, $widthMode);
   }
 
-  /** 三档循环：靠左 75% → 铺满 → 专注阅读 → 靠左 75% */
-  const WIDTH_CYCLE: WidthMode[] = ['left75', 'full', 'narrow'];
-  const WIDTH_LABEL: Record<WidthMode, string> = {
-    left75: '靠左 75%',
-    full: '铺满窗口',
-    narrow: '专注阅读（居中窄栏）',
-  };
+  /** 两档循环：靠左 75% → 铺满 → 靠左 75% */
+  const WIDTH_CYCLE: WidthMode[] = ['left75', 'full'];
 
   function cycleWidth(): void {
     const i = WIDTH_CYCLE.indexOf($widthMode);
@@ -131,7 +126,8 @@
         themeId = s.theme || 'warm-paper';
         isDark = s.dark;
         sidebarW = s.sidebar_width || 300;
-        widthMode.set(s.width_mode ?? 'left75');
+        // 旧配置可能残留已删除的 narrow 等值，非 full 一律按默认靠左 75% 处理
+        widthMode.set(s.width_mode === 'full' ? 'full' : 'left75');
         saved = s.boxes;
         applyTheme(themeId, isDark);
       } catch (e) {
@@ -194,18 +190,14 @@
         <div class="win-controls">
           <button
             class="icon-btn"
-            title={`正文宽度：${WIDTH_LABEL[$widthMode]}（点击切换）`}
-            aria-label={`当前${WIDTH_LABEL[$widthMode]}，点击切换正文宽度`}
             onclick={cycleWidth}
           >
             <svg class="width-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
               <rect class="frame" x="3" y="6" width="18" height="12" rx="2" />
               {#if $widthMode === 'full'}
                 <rect class="fill" x="5.4" y="8.4" width="13.2" height="7.2" rx="1" />
-              {:else if $widthMode === 'left75'}
-                <rect class="fill" x="5.4" y="8.4" width="9.9" height="7.2" rx="1" />
               {:else}
-                <rect class="fill" x="8.4" y="8.4" width="7.2" height="7.2" rx="1" />
+                <rect class="fill" x="5.4" y="8.4" width="9.9" height="7.2" rx="1" />
               {/if}
             </svg>
           </button>
@@ -265,10 +257,9 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    /* 正文、工具栏、状态栏共用的水平内缩量与正文栏宽，保证三者左对齐 */
+    /* 正文栏宽与水平内缩量；内缩量同时用于工具栏/状态栏，保证左缘对齐 */
     --editor-inset: clamp(16px, 2.4vw, 44px);
-    --editor-col-max: none;
-    /* 靠左 75%：占可用宽度的 75%，右边留白，不居中 */
+    /* 靠左 75%：正文占可用宽度的 75%，右边留白，不居中；工具栏/状态栏不随此变化 */
     --editor-col-align: flex-start;
     --editor-col-fill: 75%;
   }
@@ -276,12 +267,6 @@
   .editor-area[data-width-mode='full'] {
     --editor-col-max: none;
     --editor-col-align: flex-start;
-    --editor-col-fill: 100%;
-  }
-  /* 专注阅读：居中窄栏 */
-  .editor-area[data-width-mode='narrow'] {
-    --editor-col-max: 860px;
-    --editor-col-align: center;
     --editor-col-fill: 100%;
   }
   .header-row {

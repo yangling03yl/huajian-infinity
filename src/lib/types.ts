@@ -28,8 +28,8 @@ export interface Tab {
   savedMd: string;
 }
 
-/** 正文宽度模式：left75 靠左 75%（默认）/ full 铺满 / narrow 专注阅读居中 */
-export type WidthMode = 'left75' | 'full' | 'narrow';
+/** 正文宽度模式：left75 靠左 75%（默认）/ full 铺满 */
+export type WidthMode = 'left75' | 'full';
 
 export interface AppSettings {
   theme: string;

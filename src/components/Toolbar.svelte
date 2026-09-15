@@ -137,15 +137,11 @@
     border-bottom: 1px solid var(--border);
     user-select: none;
   }
-  /* 内层与正文栏同宽、同内缩、同对齐，保证工具栏和正文边缘重合 */
+  /* 工具栏固定占满编辑区宽度，不随正文宽度模式变化；左侧内缩仍与正文对齐 */
   .toolbar-inner {
     display: flex;
     align-items: center;
     gap: 16px;
-    width: var(--editor-col-fill, 100%);
-    max-width: var(--editor-col-max, none);
-    margin-left: auto;
-    margin-right: auto;
     padding: 6px var(--editor-inset, 16px);
     box-sizing: border-box;
   }

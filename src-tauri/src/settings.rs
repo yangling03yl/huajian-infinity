@@ -12,7 +12,7 @@ pub struct AppSettings {
     pub dark: bool,
     #[serde(default = "default_sidebar_width")]
     pub sidebar_width: u32,
-    /// 正文宽度模式：left75（靠左 75%，默认）/ full（铺满）/ narrow（专注阅读居中）
+    /// 正文宽度模式：left75（靠左 75%，默认）/ full（铺满）
     /// 用 Option 以区分「老配置里没写过」与「写过具体值」，供迁移判断
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width_mode: Option<String>,
@@ -31,8 +31,6 @@ pub struct AppSettings {
 pub const WIDTH_MODE_LEFT75: &str = "left75";
 /// 正文宽度模式：铺满窗口
 pub const WIDTH_MODE_FULL: &str = "full";
-/// 正文宽度模式：专注阅读（居中窄栏）
-pub const WIDTH_MODE_NARROW: &str = "narrow";
 
 /// 番茄钟计时模式：标准（倒计时）
 pub const POMODORO_MODE_STANDARD: &str = "standard";
@@ -131,20 +129,20 @@ pub struct AppState {
 }
 
 impl AppSettings {
-    /// 归一化：未知宽度模式回落到默认；老配置的 full_width 迁移到 width_mode
+    /// 归一化：未知宽度模式（含已删除的 narrow）回落到默认；老配置的 full_width 迁移到 width_mode
     ///
-    /// 迁移规则：老配置里显式写了 full_width 的（true→铺满，false→专注阅读）尊重原选择；
-    /// 完全没写过的用新默认「靠左 75%」，避免升级后布局漂移。
+    /// 迁移规则：老配置里显式写了 full_width 的（true→铺满）尊重原选择；
+    /// false（旧的「专注阅读」档）与完全没写过的都回落到「靠左 75%」，
+    /// 因为专注阅读模式已删除，靠左 75% 是新的默认布局。
     pub fn sanitized(mut self) -> Self {
         let valid = matches!(
             self.width_mode.as_deref(),
-            Some(WIDTH_MODE_LEFT75) | Some(WIDTH_MODE_FULL) | Some(WIDTH_MODE_NARROW)
+            Some(WIDTH_MODE_LEFT75) | Some(WIDTH_MODE_FULL)
         );
         if !valid {
             self.width_mode = Some(match self.full_width {
                 Some(true) => WIDTH_MODE_FULL.into(),
-                Some(false) => WIDTH_MODE_NARROW.into(),
-                None => default_width_mode(),
+                _ => default_width_mode(),
             });
         }
         // 迁移完成后不再保留旧字段
@@ -210,7 +208,7 @@ mod tests {
         s2.theme = "ink".into();
         s2.dark = true;
         s2.sidebar_width = 420;
-        s2.width_mode = Some(WIDTH_MODE_NARROW.into());
+        s2.width_mode = Some(WIDTH_MODE_FULL.into());
         s2.boxes = vec!["/a/one.hxl".into(), "/b/two.hxl".into()];
         s2.pomodoro = PomodoroSettings {
             mode: POMODORO_MODE_FORWARD.into(),
@@ -224,7 +222,7 @@ mod tests {
         assert_eq!(s3.theme, "ink");
         assert!(s3.dark);
         assert_eq!(s3.sidebar_width, 420);
-        assert_eq!(s3.width_mode(), WIDTH_MODE_NARROW);
+        assert_eq!(s3.width_mode(), WIDTH_MODE_FULL);
         assert_eq!(s3.boxes, vec!["/a/one.hxl", "/b/two.hxl"]);
         assert_eq!(s3.pomodoro, s2.pomodoro);
 
@@ -283,9 +281,13 @@ mod tests {
         fs::write(settings_path(&dir), br#"{"full_width":true}"#).unwrap();
         assert_eq!(load(&dir).width_mode(), WIDTH_MODE_FULL);
 
-        // full_width: false → 专注阅读
+        // full_width: false（旧的「专注阅读」档）→ 模式已删除，回落到靠左 75%
         fs::write(settings_path(&dir), br#"{"full_width":false}"#).unwrap();
-        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_NARROW);
+        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_LEFT75);
+
+        // 老配置里已保存的 narrow 同样回落到靠左 75%
+        fs::write(settings_path(&dir), br#"{"width_mode":"narrow"}"#).unwrap();
+        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_LEFT75);
 
         // 已写 width_mode 的优先，不受遗留 full_width 影响
         fs::write(

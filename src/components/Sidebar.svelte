@@ -97,7 +97,7 @@
         />
       </div>
     {:else}
-      <div class="hint">没有打开的花匣<br />点击 ＋ 新建，或 📂 打开 .hxl 文件</div>
+      <div class="hint">没有打开的花匣<br />点击 ＋ 新建，或 <svg class="hint-folder" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true" focusable="false"><path d="M3.5 6.4h4.6l1.9 2.2h10.5v9.2a1.8 1.8 0 0 1-1.8 1.8H5.3a1.8 1.8 0 0 1-1.8-1.8z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round" /></svg> 打开 .hxl 文件</div>
     {/each}
   </div>
 </aside>
@@ -134,17 +134,15 @@
     gap: 2px;
   }
   /* ---- 打开花匣：自绘双色文件夹图标 ---- */
+  /* 上盖由主题强调色与侧栏底色调出，随主题变化，不再用固定棕色 */
   .folder-btn {
     color: var(--accent);
-    --folder-tab: #cba57e;
+    --folder-tab: color-mix(in srgb, var(--accent) 60%, var(--bg-sidebar));
     --folder-body: var(--accent);
   }
   .folder-btn:hover {
     color: var(--accent);
     background: color-mix(in srgb, var(--accent) 16%, transparent);
-  }
-  :global(html.dark) .folder-btn {
-    --folder-tab: #a97c4b;
   }
   .folder-icon {
     display: block;
@@ -186,5 +184,10 @@
     line-height: 1.8;
     text-align: center;
     padding: 40px 16px;
+  }
+  /* 提示文案里的迷你文件夹：跟随文字颜色，保持与主题一致 */
+  .hint-folder {
+    display: inline-block;
+    vertical-align: -2px;
   }
 </style>

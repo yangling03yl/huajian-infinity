@@ -6,7 +6,7 @@ export const boxes = writable<OpenBox[]>([]);
 export const tabs = writable<Tab[]>([]);
 export const activeTab = writable<Tab | null>(null);
 export const saveState = writable<'idle' | 'saving' | 'saved' | 'error'>('idle');
-/** 正文宽度模式：left75 靠左 75%（默认）/ full 铺满 / narrow 专注阅读居中 */
+/** 正文宽度模式：left75 靠左 75%（默认）/ full 铺满 */
 export const widthMode = writable<WidthMode>('left75');
 /** 状态栏提示位：只服务番茄钟（其他业务提示已移除，失败一律走 alert） */
 export const statusMsg = writable('');

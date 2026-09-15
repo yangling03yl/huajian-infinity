@@ -8,7 +8,7 @@ use tauri::{Manager, State};
 use crate::box_store::BoxStore;
 use crate::models::{BoxInfo, NoteMeta, SnapshotMeta};
 use crate::pomodoro_stats::{self, PomodoroDayStats, PomodoroStats};
-use crate::settings::{self, AppSettings, AppState, PomodoroSettings};
+use crate::settings::{self, AppSettings, AppState, PomodoroSettings, WIDTH_MODE_FULL, WIDTH_MODE_LEFT75};
 
 fn store<'a>(state: &'a State<'_, Mutex<BoxStore>>) -> Result<std::sync::MutexGuard<'a, BoxStore>, String> {
     state.lock().map_err(|_| "内部状态锁定失败".to_string())
@@ -239,7 +239,12 @@ pub fn set_appearance(
         s.settings.theme = theme;
         s.settings.dark = dark;
         s.settings.sidebar_width = sidebar_width;
-        s.settings.width_mode = Some(width_mode);
+        // 只接受现存两档（left75/full），其他值（含已删除的 narrow）一律回落到默认
+        s.settings.width_mode = Some(if width_mode == WIDTH_MODE_FULL {
+            WIDTH_MODE_FULL.into()
+        } else {
+            WIDTH_MODE_LEFT75.into()
+        });
         // 迁移完成后不再保留旧字段
         s.settings.full_width = None;
     }

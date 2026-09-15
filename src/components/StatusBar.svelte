@@ -55,16 +55,12 @@
     flex: none;
     user-select: none;
   }
-  /* 内层与正文栏同宽、同内缩、同对齐，保证状态栏和正文边缘重合 */
+  /* 状态栏固定占满编辑区宽度，不随正文宽度模式变化；左侧内缩仍与正文对齐 */
   .statusbar-inner {
     display: flex;
     align-items: center;
     justify-content: space-between;
     height: 100%;
-    width: var(--editor-col-fill, 100%);
-    max-width: var(--editor-col-max, none);
-    margin-left: auto;
-    margin-right: auto;
     padding: 0 var(--editor-inset, 12px);
     box-sizing: border-box;
   }
