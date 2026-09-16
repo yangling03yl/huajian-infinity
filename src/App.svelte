@@ -262,12 +262,15 @@
     /* 靠左 75%：正文占可用宽度的 75%，右边留白，不居中；工具栏/状态栏不随此变化 */
     --editor-col-align: flex-start;
     --editor-col-fill: 75%;
+    /* 正文栏左外边距；两种模式均为 0（贴左），变量为将来可能的居中窄栏模式预留 */
+    --editor-col-margin-left: 0;
   }
   /* 铺满：正文用满侧栏以外的全部宽度 */
   .editor-area[data-width-mode='full'] {
     --editor-col-max: none;
     --editor-col-align: flex-start;
     --editor-col-fill: 100%;
+    --editor-col-margin-left: 0;
   }
   .header-row {
     display: flex;

@@ -292,10 +292,10 @@
     background: var(--bg);
   }
   .editor-container {
-    /* 正文栏：宽度/对齐由 .editor-area 上的变量驱动；工具栏与状态栏固定满宽，不随模式变化 */
+    /* 正文栏：宽度与左对齐由 .editor-area 上的变量驱动；左缘贴左与工具栏/状态栏对齐，右侧留白；工具栏与状态栏固定满宽，不随模式变化 */
     width: var(--editor-col-fill, 100%);
     max-width: var(--editor-col-max, none);
-    margin-left: auto;
+    margin-left: var(--editor-col-margin-left, 0);
     margin-right: auto;
     padding: 28px var(--editor-inset, clamp(16px, 2.4vw, 44px)) 80px;
     min-height: 100%;
