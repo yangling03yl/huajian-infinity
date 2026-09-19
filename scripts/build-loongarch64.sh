@@ -23,8 +23,11 @@ VERSION="$(grep -m1 '"version"' tauri.conf.json | sed 's/.*: "\([^"]*\)".*/\1/')
 echo "== 版本: $VERSION"
 
 # ---- 交叉编译环境 ----
-export CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER=/mnt/data1/huajian-cross/bin/linker-loong64
-export PKG_CONFIG=/mnt/data1/huajian-cross/bin/pkg-config-loong64
+# 包装脚本（pkg-config/linker + rpath/auto-libs）现位于仓库外工作区的 .cross-env/bin
+# （原 /mnt/data1/huajian-cross 已随磁盘整理移除；loong64 sysroot 仍在 /var/tmp/aosc-loong64-sysroot）
+CROSS_BIN="/mnt/data1/写作和文件/花笺/花笺无限/.cross-env/bin"
+export CARGO_TARGET_LOONGARCH64_UNKNOWN_LINUX_GNU_LINKER="$CROSS_BIN/linker-loong64"
+export PKG_CONFIG="$CROSS_BIN/pkg-config-loong64"
 export PKG_CONFIG_ALLOW_CROSS=1
 export CC_loongarch64_unknown_linux_gnu=loongarch64-linux-gnu-gcc
 export CXX_loongarch64_unknown_linux_gnu=loongarch64-linux-gnu-g++

@@ -118,15 +118,18 @@ export async function createEditor(
     .use(fontSizeKeymap)
     .create();
 
-  // 空花笺：光标自动置于第 0 行第 0 个字符并聚焦
-  if (initialMd.trim().length === 0) {
-    editor.action((ctx) => {
-      const view = ctx.get(editorViewCtx);
+  editor.action((ctx) => {
+    const view = ctx.get(editorViewCtx);
+    // 初始字数：字数监听只在后续事务上触发，这里先按初始文档计一次，
+    // 保证刚切换到的花笺立刻显示自己的字数，而不是残留上一篇的数值
+    wordCount.set(countChars(view.state.doc.textContent));
+    // 空花笺：光标自动置于第 0 行第 0 个字符并聚焦
+    if (initialMd.trim().length === 0) {
       const doc = view.state.doc;
       view.dispatch(view.state.tr.setSelection(Selection.atStart(doc)));
       view.focus();
-    });
-  }
+    }
+  });
 
   return {
     getMarkdown: () => {
@@ -138,6 +141,10 @@ export async function createEditor(
       return md;
     },
     setMarkdown: (md: string) => {
+      // 整体替换属于程序性恢复（快照恢复/退回/前进）：此前排定的自动保存内容已过期，
+      // 必须丢弃，否则稍后会把替换前的旧内容写回，覆盖刚恢复的正文
+      if (timer) clearTimeout(timer);
+      timer = null;
       editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const doc = ctx.get(parserCtx)(md);

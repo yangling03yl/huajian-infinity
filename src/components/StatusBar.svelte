@@ -39,7 +39,15 @@
       <span class="msg" title={$statusMsg}>{$statusMsg}</span>
     {/if}
     <PomodoroStatus />
-    {#if $activeTab}<span class="count" title="汉字、字母、数字、标点各计 1，不含空格换行">{$wordCount} 字</span>{/if}
+    {#if $activeTab}
+      {#if $wordCount !== null}
+        <span class="count" title="汉字、字母、数字、标点各计 1，不含空格换行">{$wordCount} 字</span>
+      {:else}
+        <span class="count" title="正在载入花笺…">-字</span>
+      {/if}
+    {:else}
+      <span class="count" title="未打开花笺">-字</span>
+    {/if}
     {#if saveText}<span class="save-text {saveText}">{saveText}</span>{/if}
     <span class="dim">花笺infinity {ver}</span>
     </span>

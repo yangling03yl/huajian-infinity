@@ -6,12 +6,31 @@
 
   interface Props {
     editor: EditorInstance | null;
+    /** 是否可退回（存在更早的修改记录） */
+    canBack: boolean;
+    /** 是否可前进（退回后可撤回退回） */
+    canForward: boolean;
+    /** 退回/前进移动进行中（按钮置灰防连点） */
+    historyBusy: boolean;
     snapshotsOpen: boolean;
     onCreateSnapshot: () => void;
     onToggleSnapshots: () => void;
     onExport: (kind: 'md' | 'pdf') => void;
+    onHistoryBack: () => void;
+    onHistoryForward: () => void;
   }
-  let { editor, snapshotsOpen, onCreateSnapshot, onToggleSnapshots, onExport }: Props = $props();
+  let {
+    editor,
+    canBack,
+    canForward,
+    historyBusy,
+    snapshotsOpen,
+    onCreateSnapshot,
+    onToggleSnapshots,
+    onExport,
+    onHistoryBack,
+    onHistoryForward,
+  }: Props = $props();
 
   let sel = $state({ heading: 0, fontSize: null as number | null });
   let showCustom = $state(false);
@@ -60,6 +79,21 @@
 
 <div class="toolbar">
   <div class="toolbar-inner">
+    <div class="group history-group" title="修改历史：最近十次修改（不产生新记录，仅在本会话内）">
+      <button
+        class="action-btn"
+        title="退回：回到上一次修改后的内容"
+        disabled={!editor || !canBack || historyBusy}
+        onclick={onHistoryBack}
+      >↶ 退回</button>
+      <button
+        class="action-btn"
+        title="前进：撤回退回"
+        disabled={!editor || !canForward || historyBusy}
+        onclick={onHistoryForward}
+      >↷ 前进</button>
+    </div>
+
     <label class="group" title="标题样式（Ctrl+1~6 标题，Ctrl+0 正文）">
     <span class="label">标题</span>
     <select disabled={!editor} value={sel.heading} onchange={onHeadingChange}>

@@ -2,7 +2,15 @@
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-  import { activeTab, tabs, setTabDirty, saveState, boxById, showHint } from '../lib/stores';
+  import { activeTab, tabs, setTabDirty, saveState, boxById, showHint, wordCount } from '../lib/stores';
+  import {
+    initHistory,
+    recordModification,
+    historyBack,
+    historyForward,
+    publishHistoryState,
+    noteHistoryState,
+  } from '../lib/note-history';
   import { api, errMsg } from '../lib/api';
   import { createEditor, type EditorInstance } from '../lib/editor';
   import { buildPdf, bytesToBase64, strToBase64, safeFileName } from '../lib/export';
@@ -36,6 +44,9 @@
     const [boxId, noteId] = activeKey.split('/');
     const md = editor.getMarkdown();
     if (md === savedMdRef) return;
+    // 保存点即修改点：把本次内容记入该花笺的修改历史（供退回/前进，用户不可见）
+    recordModification(activeKey, md);
+    publishHistoryState(activeKey);
     saveState.set('saving');
     try {
       await api.writeNote(boxId, noteId, md);
@@ -65,6 +76,9 @@
   async function handleTabChange(tab: { boxId: string; noteId: string } | null): Promise<void> {
     const key = tab ? `${tab.boxId}/${tab.noteId}` : '';
     if (key === activeKey && key !== '') return;
+    // 切换一开始就清掉上一篇的字数与历史按钮状态，避免 flush 窗口内残留旧数据
+    wordCount.set(null);
+    publishHistoryState('');
     await flush();
     if (editor) {
       const old = editor;
@@ -74,6 +88,9 @@
     container?.replaceChildren();
     exitSplit();
     liveMd = '';
+    // 切换期间先清掉上一篇的字数与历史按钮状态，避免短暂显示上一篇的数据
+    wordCount.set(null);
+    publishHistoryState('');
     if (!tab) {
       activeKey = '';
       return;
@@ -88,6 +105,11 @@
       const myKey = key;
       editor = await createEditor(container, md, async (newMd) => {
         const [boxId, noteId] = myKey.split('/');
+        // 程序性恢复（退回/前进/快照恢复）重排的去抖回调：内容与已持久化一致，跳过冗余写盘
+        if (activeKey === myKey && newMd === savedMdRef) return;
+        // 自动保存去抖触发 = 一次修改落定，记入历史（与当前位置内容相同会被忽略）
+        recordModification(myKey, newMd);
+        publishHistoryState(activeKey);
         saveState.set('saving');
         try {
           await api.writeNote(boxId, noteId, newMd);
@@ -100,8 +122,11 @@
           saveState.set('error');
         }
       }, onLive);
+      initHistory(myKey, md);
+      publishHistoryState(myKey);
       saveState.set('saved');
     } catch (e) {
+      publishHistoryState('');
       alert(`读取花笺失败: ${errMsg(e)}`);
     } finally {
       loading = false;
@@ -139,10 +164,17 @@
   /** 恢复快照版本为正文 */
   async function restoreSnapshot(meta: SnapshotMeta): Promise<void> {
     const tab = get(activeTab);
-    if (!tab || !editor) return;
+    const ed = editor;
+    if (!tab || !ed || historyMoving) return;
+    const key = activeKey;
     try {
       const body = await api.applySnapshot(tab.boxId, tab.noteId, meta.id);
-      editor.setMarkdown(body);
+      // IPC 期间可能已切换标签，防止把旧笔记的快照内容写进新笔记（同 historyGo 的守卫）
+      if (activeKey !== key || editor !== ed) return;
+      ed.setMarkdown(body);
+      // 快照恢复也是一次内容修改，同样记入退回/前进历史
+      recordModification(key, body);
+      publishHistoryState(key);
       setTabDirty(tab, false, body);
       savedMdRef = body;
       liveMd = body;
@@ -169,6 +201,33 @@
     editor.setMarkdown(snap.snapshotMd);
     liveMd = snap.snapshotMd;
     await flush();
+  }
+
+  let historyMoving = $state(false);
+
+  /**
+   * 修改历史移动：dir='back' 退回到上一次修改后的内容；dir='forward' 撤回退回。
+   * 两者只是同一条历史链上的双向移动（不产生新记录）。移动前先 flush，
+   * 把尚未保存的输入落定并记入历史，保证它仍可从反方向找回。
+   */
+  async function historyGo(dir: 'back' | 'forward'): Promise<void> {
+    const key = activeKey;
+    const ed = editor;
+    if (!ed || !key || historyMoving) return;
+    historyMoving = true;
+    try {
+      await flush();
+      // flush 期间可能已切换标签（旧编辑器被销毁），此时放弃本次移动
+      if (activeKey !== key || editor !== ed) return;
+      const target = dir === 'back' ? historyBack(key) : historyForward(key);
+      if (target === null) return;
+      publishHistoryState(key);
+      ed.setMarkdown(target);
+      liveMd = target;
+      await flush();
+    } finally {
+      historyMoving = false;
+    }
   }
 
   function toggleSnapshots(): void {
@@ -228,10 +287,15 @@
 <div class="editor-pane">
   <Toolbar
     {editor}
+    canBack={$noteHistoryState.canBack}
+    canForward={$noteHistoryState.canForward}
+    historyBusy={historyMoving}
     snapshotsOpen={showSnapshots}
     onCreateSnapshot={() => void createSnapshot()}
     onToggleSnapshots={toggleSnapshots}
     onExport={(k) => void exportNote(k)}
+    onHistoryBack={() => void historyGo('back')}
+    onHistoryForward={() => void historyGo('forward')}
   />
   <div class="editor-body">
     <div class="editor-wrap">

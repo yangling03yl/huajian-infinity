@@ -1,6 +1,7 @@
 import { writable, get } from 'svelte/store';
 import type { BoxInfo, NoteMeta, OpenBox, Tab, WidthMode } from './types';
 import { api } from './api';
+import { dropHistory, dropBoxHistories } from './note-history';
 
 export const boxes = writable<OpenBox[]>([]);
 export const tabs = writable<Tab[]>([]);
@@ -26,7 +27,8 @@ export function showHint(text: string): void {
     statusHint.set('');
   }, HINT_MS);
 }
-export const wordCount = writable(0);
+/** 当前打开花笺的字数；null 表示尚未载入（状态栏以「-」占位） */
+export const wordCount = writable<number | null>(null);
 export const editorSel = writable<{ heading: number; fontSize: number | null }>({ heading: 0, fontSize: null });
 
 function findBox(boxId: string): OpenBox | undefined {
@@ -86,6 +88,8 @@ export function upsertNote(boxId: string, note: NoteMeta): void {
 }
 
 export function removeNoteUI(boxId: string, noteId: string): void {
+  // 该花笺的会话内修改历史一并作废
+  dropHistory(`${boxId}/${noteId}`);
   boxes.update((list) =>
     list.map((b) =>
       b.info.id === boxId
@@ -107,6 +111,8 @@ export function removeNoteUI(boxId: string, noteId: string): void {
 
 export async function removeBoxUI(boxId: string): Promise<void> {
   await api.closeBox(boxId);
+  // 花匣内所有花笺的会话内修改历史一并作废
+  dropBoxHistories(boxId);
   boxes.update((list) => list.filter((b) => b.info.id !== boxId));
   tabs.update((list) => list.filter((t) => t.boxId !== boxId));
   const act = get(activeTab);
