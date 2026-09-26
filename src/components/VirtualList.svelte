@@ -28,15 +28,15 @@
   const end = $derived(Math.min(count, Math.ceil((scrollTop + viewH) / rowHeight) + overscan));
   const padTop = $derived(start * rowHeight);
 
-  /** 拖拽悬停在上下边缘时自动滚动，便于把花笺拖到当前可视区之外的位置 */
-  function onContainerDragOver(e: DragEvent): void {
+  /** 供侧边栏指针拖拽调用：指针悬停在上下边缘时自动滚动，便于拖到可视区之外 */
+  export function nudgeScroll(clientY: number): void {
     if (!el) return;
     const rect = el.getBoundingClientRect();
     const edge = 28;
-    if (e.clientY < rect.top + edge) {
-      el.scrollTop -= Math.max(5, (rect.top + edge - e.clientY) / 2);
-    } else if (e.clientY > rect.bottom - edge) {
-      el.scrollTop += Math.max(5, (e.clientY - (rect.bottom - edge)) / 2);
+    if (clientY < rect.top + edge) {
+      el.scrollTop -= Math.max(4, (rect.top + edge - clientY) / 3);
+    } else if (clientY > rect.bottom - edge) {
+      el.scrollTop += Math.max(4, (clientY - (rect.bottom - edge)) / 3);
     }
   }
 </script>
@@ -46,7 +46,6 @@
   style="overflow-y:auto;overflow-x:hidden;height:100%"
   bind:this={el}
   onscroll={(e) => (scrollTop = (e.currentTarget as HTMLDivElement).scrollTop)}
-  ondragover={onContainerDragOver}
 >
   <div class="vl-inner" style="height:{total}px">
     <div class="vl-window" style="transform:translateY({padTop}px)">

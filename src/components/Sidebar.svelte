@@ -1,7 +1,7 @@
 <script lang="ts">
   import { boxes } from '../lib/stores';
   import { api } from '../lib/api';
-  import { NOTE_MIME } from '../lib/dnd';
+  import { claimDrag, clickSuppressed, makeGhost, positionGhost, releaseDrag, removeGhost } from '../lib/dnd';
   import BoxItem from './BoxItem.svelte';
 
   interface Props {
@@ -11,43 +11,129 @@
   }
   let { onNewBox, onOpenBox, onRenameRequest }: Props = $props();
 
-  let dragIdx = $state(-1);
-  let overIdx = $state(-1);
+  // ---- 花匣排序拖拽（指针事件自实现；Windows WebView2 在 dragDropEnabled 下
+  // 禁用 HTML5 DnD，故不能用 draggable 原生拖拽） ----
+  let dragIdx = $state(-1); // 正在拖拽的花匣
+  let overIdx = $state(-1); // 悬停目标槽位（插入到它之前）
+  let boxListEl: HTMLDivElement | undefined = $state();
+  let pending: { idx: number; startX: number; startY: number } | null = null;
+  let ghost: HTMLElement | null = null;
+  let grabOff = { x: 0, y: 0 };
+  const dragOwner = {};
 
-  function onDragStart(e: DragEvent, idx: number): void {
+  function onSlotPointerDown(e: PointerEvent, idx: number): void {
+    if (e.button !== 0) return;
+    const t = e.target as HTMLElement;
+    // 只有花匣标题栏能发起拖拽；行内按钮、花笺行（由 BoxItem 自己处理）除外
+    const head = t.closest('.box-head');
+    if (t.closest('button') || !head) return;
+    // 捕获在 box-head 上：保证指针移出窗口外也能收到 pointerup，
+    // 同时 click 仍落在 head 上，不破坏折叠/展开
+    try {
+      (head as HTMLElement).setPointerCapture(e.pointerId);
+    } catch { /* 捕获失败不影响后续流程 */ }
+    pending = { idx, startX: e.clientX, startY: e.clientY };
+  }
+
+  function onWindowPointerMove(e: PointerEvent): void {
+    if (ghost) {
+      positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
+      nudgeList(e.clientY);
+      updateOverIdx(e.clientX, e.clientY);
+      return;
+    }
+    if (!pending) return;
+    if (Math.hypot(e.clientX - pending.startX, e.clientY - pending.startY) < 6) return;
+    beginDrag(e);
+  }
+
+  function beginDrag(e: PointerEvent): void {
+    const idx = pending!.idx;
+    if (!claimDrag(dragOwner)) {
+      pending = null;
+      return;
+    }
+    const head = boxListEl?.children[idx]?.querySelector('.box-head') as HTMLElement | null;
+    if (head) {
+      const rect = head.getBoundingClientRect();
+      grabOff = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      ghost = makeGhost(head);
+      positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
+    }
     dragIdx = idx;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', String(idx));
+    pending = null;
+  }
+
+  function updateOverIdx(cx: number, cy: number): void {
+    const el = document.elementFromPoint(cx, cy)?.closest('.box-slot') as HTMLElement | null;
+    if (!el || !boxListEl?.contains(el)) {
+      if (overIdx !== -1) overIdx = -1;
+      return;
+    }
+    const idx = Array.prototype.indexOf.call(boxListEl.children, el);
+    if (idx === dragIdx) {
+      if (overIdx !== -1) overIdx = -1;
+    } else if (overIdx !== idx) {
+      overIdx = idx;
     }
   }
 
-  function onDragOver(e: DragEvent, idx: number): void {
-    if (e.dataTransfer?.types.includes(NOTE_MIME)) return; // 花笺拖拽：不参与花匣排序
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    overIdx = idx;
+  /** 指针靠近侧栏上下边缘时自动滚动花匣列表 */
+  function nudgeList(clientY: number): void {
+    if (!boxListEl) return;
+    const rect = boxListEl.getBoundingClientRect();
+    const edge = 28;
+    if (clientY < rect.top + edge) {
+      boxListEl.scrollTop -= Math.max(4, (rect.top + edge - clientY) / 3);
+    } else if (clientY > rect.bottom - edge) {
+      boxListEl.scrollTop += Math.max(4, (clientY - (rect.bottom - edge)) / 3);
+    }
   }
 
-  function onDrop(e: DragEvent, idx: number): void {
-    if (e.dataTransfer?.types.includes(NOTE_MIME)) return; // 花笺拖拽：不在花匣层面处理
-    e.preventDefault();
-    const from = dragIdx >= 0 ? dragIdx : Number(e.dataTransfer?.getData('text/plain') ?? -1);
-    overIdx = -1;
+  function endDrag(commit: boolean): void {
+    const from = dragIdx;
+    const to = overIdx;
+    removeGhost(ghost);
+    ghost = null;
     dragIdx = -1;
+    overIdx = -1;
+    pending = null;
+    releaseDrag(dragOwner);
+    if (!commit || from < 0 || to < 0 || from === to) return;
     const list = $boxes;
-    if (!Number.isInteger(from) || from < 0 || from >= list.length || from === idx) return;
+    if (from >= list.length || to > list.length) return;
     const next = [...list];
     const [moved] = next.splice(from, 1);
-    next.splice(idx, 0, moved);
+    next.splice(to > from ? to - 1 : to, 0, moved);
     boxes.set(next);
     void api.reorderBoxes(next.map((b) => b.info.id));
   }
 
-  function onDragEnd(): void {
-    dragIdx = -1;
-    overIdx = -1;
+  function onWindowPointerUp(): void {
+    if (ghost) endDrag(true);
+    else pending = null;
   }
+
+  function onWindowPointerCancel(): void {
+    if (ghost || pending) endDrag(false);
+  }
+
+  function onWindowKeyDown(e: KeyboardEvent): void {
+    if (e.key === 'Escape' && (ghost || pending)) endDrag(false);
+  }
+
+  $effect(() => {
+    window.addEventListener('pointermove', onWindowPointerMove);
+    window.addEventListener('pointerup', onWindowPointerUp);
+    window.addEventListener('pointercancel', onWindowPointerCancel);
+    window.addEventListener('keydown', onWindowKeyDown);
+    return () => {
+      window.removeEventListener('pointermove', onWindowPointerMove);
+      window.removeEventListener('pointerup', onWindowPointerUp);
+      window.removeEventListener('pointercancel', onWindowPointerCancel);
+      window.removeEventListener('keydown', onWindowKeyDown);
+    };
+  });
 </script>
 
 <aside class="sidebar">
@@ -79,18 +165,13 @@
     </div>
   </header>
 
-  <div class="box-list">
+  <div class="box-list" bind:this={boxListEl}>
     {#each $boxes as b, i (b.info.id)}
       <div
         class="box-slot"
         class:dragging={dragIdx === i}
         class:drag-over={overIdx === i && dragIdx !== i}
-        draggable="true"
-        ondragstart={(e) => onDragStart(e, i)}
-        ondragover={(e) => onDragOver(e, i)}
-        ondrop={(e) => onDrop(e, i)}
-        ondragend={onDragEnd}
-        ondragleave={() => overIdx === i && (overIdx = -1)}
+        onpointerdown={(e) => onSlotPointerDown(e, i)}
       >
         <BoxItem
           box={b.info}

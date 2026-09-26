@@ -190,3 +190,16 @@ input {
 .editor-container.prose a {
   color: var(--accent);
 }
+
+/* ---- 侧边栏指针拖拽幽灵（克隆的行/标题，跟随指针） ---- */
+.dnd-ghost {
+  position: fixed;
+  z-index: 9999;
+  pointer-events: none;
+  margin: 0;
+  max-width: 240px;
+  overflow: hidden;
+  opacity: 0.95;
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+}

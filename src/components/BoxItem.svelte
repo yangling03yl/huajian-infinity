@@ -3,7 +3,7 @@
   import { activeTab, noteById, openNote, removeBoxUI, removeNoteUI, refreshNotes, reorderNotesUI, toggleBox } from '../lib/stores';
   import { api, errMsg } from '../lib/api';
   import { nextColor } from '../lib/colors';
-  import { NOTE_MIME } from '../lib/dnd';
+  import { claimDrag, clickSuppressed, makeGhost, positionGhost, releaseDrag, removeGhost } from '../lib/dnd';
   import VirtualList from './VirtualList.svelte';
 
   interface Props {
@@ -18,8 +18,16 @@
 
   let busy = $state(false);
   let confirmDelete = $state<string | null>(null);
-  /** 花笺排序拖拽：悬停目标行 + 插入位置（上缘/下缘） */
+  /** 花笺排序拖拽：拖拽源 + 悬停目标行与插入位置（上缘/下缘） */
+  let dragNoteId = $state<string | null>(null);
   let dropTarget = $state<{ id: string; pos: 'above' | 'below' } | null>(null);
+
+  let vl: VirtualList | undefined = $state();
+  let notesEl: HTMLDivElement | undefined = $state();
+  let pending: { note: NoteMeta; startX: number; startY: number } | null = null;
+  let ghost: HTMLElement | null = null;
+  let grabOff = { x: 0, y: 0 };
+  const dragOwner = {};
 
   async function createNote() {
     const used = notes.map((n) => n.color);
@@ -61,66 +69,99 @@
     }
   }
 
-  // ---- 侧边栏花笺拖拽排序（仅限同一花匣内） ----
+  // ---- 侧边栏花笺拖拽排序（指针事件自实现，仅限同一花匣内；Windows WebView2
+  // 在 dragDropEnabled 下禁用 HTML5 DnD，故不能用 draggable 原生拖拽） ----
 
-  /** 正在拖拽的花笺 id（只在发起拖拽的本花匣实例中有值，天然禁止跨花匣排序） */
-  let dragNoteId = $state<string | null>(null);
-
-  function isNoteDrag(e: DragEvent): boolean {
-    return e.dataTransfer?.types.includes(NOTE_MIME) ?? false;
+  function onNotePointerDown(e: PointerEvent, note: NoteMeta): void {
+    if (e.button !== 0) return;
+    if ((e.target as HTMLElement).closest('button')) return; // 行内按钮不发起拖拽
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch { /* 捕获失败不影响后续流程 */ }
+    pending = { note, startX: e.clientX, startY: e.clientY };
   }
 
-  function onNoteDragStart(e: DragEvent, note: NoteMeta): void {
-    // 阻止冒泡到花匣槽位，避免误触发花匣排序
-    e.stopPropagation();
+  function onWindowPointerMove(e: PointerEvent): void {
+    if (ghost) {
+      positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
+      vl?.nudgeScroll(e.clientY);
+      updateDropTarget(e.clientX, e.clientY);
+      return;
+    }
+    if (!pending) return;
+    if (Math.hypot(e.clientX - pending.startX, e.clientY - pending.startY) < 6) return;
+    beginDrag(e);
+  }
+
+  function beginDrag(e: PointerEvent): void {
+    const note = pending!.note;
+    if (!claimDrag(dragOwner)) {
+      pending = null;
+      return;
+    }
+    const row = notesEl?.querySelector(`[data-note-id="${note.id}"]`) as HTMLElement | null;
+    if (row) {
+      const rect = row.getBoundingClientRect();
+      grabOff = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+      ghost = makeGhost(row);
+      positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
+    }
     dragNoteId = note.id;
-    dropTarget = null;
-    if (e.dataTransfer) {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData(NOTE_MIME, JSON.stringify({ boxId: box.id, noteId: note.id }));
-      e.dataTransfer.setData('text/plain', note.title);
+    pending = null;
+  }
+
+  function updateDropTarget(cx: number, cy: number): void {
+    const src = dragNoteId;
+    if (!src) return;
+    const el = document.elementFromPoint(cx, cy)?.closest('.note-row') as HTMLElement | null;
+    const id = el && notesEl?.contains(el) ? (el.dataset.noteId ?? null) : null;
+    if (!id || id === src) {
+      if (dropTarget) dropTarget = null;
+      return;
     }
+    const rect = el!.getBoundingClientRect();
+    const pos: 'above' | 'below' = cy < rect.top + rect.height / 2 ? 'above' : 'below';
+    if (dropTarget?.id !== id || dropTarget?.pos !== pos) dropTarget = { id, pos };
   }
 
-  function onNoteDragOver(e: DragEvent, note: NoteMeta): void {
-    if (!isNoteDrag(e)) return; // 花匣拖拽：不拦截，交给上层槽位处理
-    e.stopPropagation();
-    if (!dragNoteId || dragNoteId === note.id) {
-      if (dropTarget?.id === note.id) dropTarget = null;
-      return; // 悬停在拖拽源行上：不给落下指示
-    }
-    e.preventDefault();
-    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    dropTarget = {
-      id: note.id,
-      pos: e.clientY < rect.top + rect.height / 2 ? 'above' : 'below',
-    };
-  }
-
-  function onNoteDragLeave(e: DragEvent, note: NoteMeta): void {
-    // 在行内子元素间移动时不清除指示线
-    const to = e.relatedTarget as Node | null;
-    if (to && (e.currentTarget as Node).contains(to)) return;
-    if (dropTarget?.id === note.id) dropTarget = null;
-  }
-
-  function onNoteDrop(e: DragEvent, note: NoteMeta): void {
-    if (!isNoteDrag(e)) return;
-    e.preventDefault();
-    e.stopPropagation();
+  function endDrag(commit: boolean): void {
     const src = dragNoteId;
     const target = dropTarget;
+    removeGhost(ghost);
+    ghost = null;
     dragNoteId = null;
     dropTarget = null;
-    if (!src || !target || target.id !== note.id || src === note.id) return;
+    pending = null;
+    releaseDrag(dragOwner);
+    if (!commit || !src || !target) return;
     commitOrder(moveNote(notes, src, target.id, target.pos));
   }
 
-  function onNoteDragEnd(): void {
-    dragNoteId = null;
-    dropTarget = null;
+  function onWindowPointerUp(): void {
+    if (ghost) endDrag(true);
+    else pending = null;
   }
+
+  function onWindowPointerCancel(): void {
+    if (ghost || pending) endDrag(false);
+  }
+
+  function onWindowKeyDown(e: KeyboardEvent): void {
+    if (e.key === 'Escape' && (ghost || pending)) endDrag(false);
+  }
+
+  $effect(() => {
+    window.addEventListener('pointermove', onWindowPointerMove);
+    window.addEventListener('pointerup', onWindowPointerUp);
+    window.addEventListener('pointercancel', onWindowPointerCancel);
+    window.addEventListener('keydown', onWindowKeyDown);
+    return () => {
+      window.removeEventListener('pointermove', onWindowPointerMove);
+      window.removeEventListener('pointerup', onWindowPointerUp);
+      window.removeEventListener('pointercancel', onWindowPointerCancel);
+      window.removeEventListener('keydown', onWindowKeyDown);
+    };
+  });
 
   /** 把 fromId 的花笺移动到 targetId 的上/下缘，返回新数组（不改动时返回原数组） */
   function moveNote(
@@ -151,7 +192,7 @@
 </script>
 
 <div class="box">
-  <div class="box-head" role="button" tabindex="-1" onclick={() => toggleBox(box.id)}>
+  <div class="box-head" role="button" tabindex="-1" onclick={() => { if (!clickSuppressed()) toggleBox(box.id); }}>
     <span class="caret {expanded ? 'open' : ''}">▸</span>
     <span class="box-name">{box.name}</span>
     <span class="count">{notes.length}</span>
@@ -163,11 +204,11 @@
   </div>
 
   {#if expanded}
-    <div class="notes">
+    <div class="notes" bind:this={notesEl}>
       {#if notes.length === 0}
         <div class="empty">空花匣，点 ＋ 新建花笺</div>
       {:else}
-        <VirtualList count={notes.length}>
+        <VirtualList count={notes.length} bind:this={vl}>
           {#snippet children(idx)}
             {@const note = notes[idx]}
             {@const key = `${box.id}/${note.id}`}
@@ -178,14 +219,13 @@
               class:drop-below={dropTarget?.id === note.id && dropTarget.pos === 'below'}
               role="button"
               tabindex="-1"
-              draggable="true"
-              onclick={() => openNote(box.id, note.id)}
+              data-note-id={note.id}
+              onclick={() => {
+                if (clickSuppressed()) return;
+                openNote(box.id, note.id);
+              }}
               ondblclick={() => onRenameRequest(box.id, note.id)}
-              ondragstart={(e) => onNoteDragStart(e, note)}
-              ondragover={(e) => onNoteDragOver(e, note)}
-              ondragleave={(e) => onNoteDragLeave(e, note)}
-              ondrop={(e) => onNoteDrop(e, note)}
-              ondragend={onNoteDragEnd}
+              onpointerdown={(e) => onNotePointerDown(e, note)}
             >
               <span class="dot" style="background:{note.color}"></span>
               <span class="title" title={note.title}>{note.title || '未命名花笺'}</span>
