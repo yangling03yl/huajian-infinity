@@ -73,6 +73,27 @@ export function toggleBox(boxId: string): void {
   );
 }
 
+/** 按新顺序更新某花匣内花笺的展示顺序（持久化由调用方通过 api.reorderNotes 完成） */
+export function reorderNotesUI(boxId: string, order: string[]): void {
+  boxes.update((list) =>
+    list.map((b) => {
+      if (b.info.id !== boxId) return b;
+      const byId = new Map(b.notes.map((n) => [n.id, n]));
+      const next: NoteMeta[] = [];
+      for (const id of order) {
+        const n = byId.get(id);
+        if (n) {
+          next.push(n);
+          byId.delete(id);
+        }
+      }
+      // order 未覆盖的花笺保持原有相对顺序追加在末尾
+      next.push(...b.notes.filter((n) => byId.has(n.id)));
+      return { ...b, notes: next };
+    }),
+  );
+}
+
 export function upsertNote(boxId: string, note: NoteMeta): void {
   boxes.update((list) =>
     list.map((b) => {

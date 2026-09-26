@@ -423,6 +423,22 @@ impl BoxStore {
         note.updated_at = updated;
         Self::save_index(box_)
     }
+
+    /// 按新顺序保存花匣内花笺列表（order 为花笺 id 的有序列表）。
+    /// order 未覆盖的花笺保持原有相对顺序排在末尾，不会丢失；不改变 updated_at。
+    pub fn reorder_notes(&mut self, box_id: &str, order: Vec<String>) -> Result<(), String> {
+        let box_ = self.get_mut(box_id)?;
+        let rank: HashMap<&str, usize> = order
+            .iter()
+            .enumerate()
+            .map(|(i, id)| (id.as_str(), i))
+            .collect();
+        // 稳定排序：order 之外的花笺按原相对顺序落在末尾
+        box_.index
+            .notes
+            .sort_by_key(|n| rank.get(n.id.as_str()).copied().unwrap_or(order.len()));
+        Self::save_index(box_)
+    }
 }
 
 #[cfg(test)]
@@ -544,6 +560,61 @@ mod tests {
         assert_eq!(names.len(), 2);
         assert!(names[0] == "box.json");
         assert!(names[1].starts_with("notes/") && names[1].ends_with(".md"));
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reorder_notes_persists_order() {
+        let dir = std::env::temp_dir().join("huajian_reorder_test");
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("reorder.hxl");
+
+        let mut store = BoxStore::new();
+        let info = store.create(&path, "排序测试".into()).unwrap();
+        let n1 = store.create_note(&info.id, "一".into(), "#b4753f".into()).unwrap();
+        let n2 = store.create_note(&info.id, "二".into(), "#3f7fb4".into()).unwrap();
+        let n3 = store.create_note(&info.id, "三".into(), "#3fb46a".into()).unwrap();
+
+        // 反转为 三、二、一
+        store
+            .reorder_notes(&info.id, vec![n3.id.clone(), n2.id.clone(), n1.id.clone()])
+            .unwrap();
+        let titles: Vec<String> = store
+            .get(&info.id)
+            .unwrap()
+            .index
+            .notes
+            .iter()
+            .map(|n| n.title.clone())
+            .collect();
+        assert_eq!(titles, vec!["三", "二", "一"]);
+
+        // 部分顺序：只给出一，二之外的花笺保持原相对顺序追加在末尾
+        store.reorder_notes(&info.id, vec![n1.id.clone()]).unwrap();
+        let titles: Vec<String> = store
+            .get(&info.id)
+            .unwrap()
+            .index
+            .notes
+            .iter()
+            .map(|n| n.title.clone())
+            .collect();
+        assert_eq!(titles, vec!["一", "三", "二"]);
+
+        // 关闭重开，验证顺序已持久化到 box.json
+        store.close(&info.id).unwrap();
+        let info2 = store.open(&path).unwrap();
+        let titles: Vec<String> = store
+            .get(&info2.id)
+            .unwrap()
+            .index
+            .notes
+            .iter()
+            .map(|n| n.title.clone())
+            .collect();
+        assert_eq!(titles, vec!["一", "三", "二"]);
 
         let _ = fs::remove_dir_all(&dir);
     }

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { boxes } from '../lib/stores';
   import { api } from '../lib/api';
+  import { NOTE_MIME } from '../lib/dnd';
   import BoxItem from './BoxItem.svelte';
 
   interface Props {
@@ -22,18 +23,20 @@
   }
 
   function onDragOver(e: DragEvent, idx: number): void {
+    if (e.dataTransfer?.types.includes(NOTE_MIME)) return; // 花笺拖拽：不参与花匣排序
     e.preventDefault();
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
     overIdx = idx;
   }
 
   function onDrop(e: DragEvent, idx: number): void {
+    if (e.dataTransfer?.types.includes(NOTE_MIME)) return; // 花笺拖拽：不在花匣层面处理
     e.preventDefault();
     const from = dragIdx >= 0 ? dragIdx : Number(e.dataTransfer?.getData('text/plain') ?? -1);
     overIdx = -1;
     dragIdx = -1;
     const list = $boxes;
-    if (from < 0 || from >= list.length || from === idx) return;
+    if (!Number.isInteger(from) || from < 0 || from >= list.length || from === idx) return;
     const next = [...list];
     const [moved] = next.splice(from, 1);
     next.splice(idx, 0, moved);

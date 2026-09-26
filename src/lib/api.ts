@@ -22,6 +22,8 @@ export const api = {
   deleteNote: (boxId: string, noteId: string) => invoke<void>('delete_note', { boxId, noteId }),
   setNoteColor: (boxId: string, noteId: string, color: string) =>
     invoke<void>('set_note_color', { boxId, noteId, color }),
+  reorderNotes: (boxId: string, order: string[]) =>
+    invoke<void>('reorder_notes', { boxId, order }),
   saveBox: (boxId: string) => invoke<void>('save_box', { boxId }),
   createSnapshot: (boxId: string, noteId: string, label: string | null) =>
     invoke<SnapshotMeta>('create_snapshot', { boxId, noteId, label }),

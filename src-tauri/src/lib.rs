@@ -57,6 +57,7 @@ pub fn run() {
             commands::rename_note,
             commands::delete_note,
             commands::set_note_color,
+            commands::reorder_notes,
             commands::save_box,
             commands::create_snapshot,
             commands::list_snapshots,

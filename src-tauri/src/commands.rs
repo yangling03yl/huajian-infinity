@@ -146,6 +146,16 @@ pub fn set_note_color(
     store(&state)?.set_note_color(&box_id, &note_id, color)
 }
 
+/// 按新顺序保存花匣内花笺列表（order 为花笺 id 的有序列表）
+#[tauri::command]
+pub fn reorder_notes(
+    state: State<Mutex<BoxStore>>,
+    box_id: String,
+    order: Vec<String>,
+) -> Result<(), String> {
+    store(&state)?.reorder_notes(&box_id, order)
+}
+
 #[tauri::command]
 pub fn save_box(state: State<Mutex<BoxStore>>, box_id: String) -> Result<(), String> {
     let s = store(&state)?;

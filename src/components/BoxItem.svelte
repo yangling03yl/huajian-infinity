@@ -1,8 +1,9 @@
 <script lang="ts">
   import type { BoxInfo, NoteMeta } from '../lib/types';
-  import { activeTab, noteById, openNote, removeBoxUI, removeNoteUI, refreshNotes, toggleBox } from '../lib/stores';
+  import { activeTab, noteById, openNote, removeBoxUI, removeNoteUI, refreshNotes, reorderNotesUI, toggleBox } from '../lib/stores';
   import { api, errMsg } from '../lib/api';
   import { nextColor } from '../lib/colors';
+  import { NOTE_MIME } from '../lib/dnd';
   import VirtualList from './VirtualList.svelte';
 
   interface Props {
@@ -17,6 +18,8 @@
 
   let busy = $state(false);
   let confirmDelete = $state<string | null>(null);
+  /** 花笺排序拖拽：悬停目标行 + 插入位置（上缘/下缘） */
+  let dropTarget = $state<{ id: string; pos: 'above' | 'below' } | null>(null);
 
   async function createNote() {
     const used = notes.map((n) => n.color);
@@ -57,6 +60,94 @@
       alert(errMsg(e));
     }
   }
+
+  // ---- 侧边栏花笺拖拽排序（仅限同一花匣内） ----
+
+  /** 正在拖拽的花笺 id（只在发起拖拽的本花匣实例中有值，天然禁止跨花匣排序） */
+  let dragNoteId = $state<string | null>(null);
+
+  function isNoteDrag(e: DragEvent): boolean {
+    return e.dataTransfer?.types.includes(NOTE_MIME) ?? false;
+  }
+
+  function onNoteDragStart(e: DragEvent, note: NoteMeta): void {
+    // 阻止冒泡到花匣槽位，避免误触发花匣排序
+    e.stopPropagation();
+    dragNoteId = note.id;
+    dropTarget = null;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData(NOTE_MIME, JSON.stringify({ boxId: box.id, noteId: note.id }));
+      e.dataTransfer.setData('text/plain', note.title);
+    }
+  }
+
+  function onNoteDragOver(e: DragEvent, note: NoteMeta): void {
+    if (!isNoteDrag(e)) return; // 花匣拖拽：不拦截，交给上层槽位处理
+    e.stopPropagation();
+    if (!dragNoteId || dragNoteId === note.id) {
+      if (dropTarget?.id === note.id) dropTarget = null;
+      return; // 悬停在拖拽源行上：不给落下指示
+    }
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    dropTarget = {
+      id: note.id,
+      pos: e.clientY < rect.top + rect.height / 2 ? 'above' : 'below',
+    };
+  }
+
+  function onNoteDragLeave(e: DragEvent, note: NoteMeta): void {
+    // 在行内子元素间移动时不清除指示线
+    const to = e.relatedTarget as Node | null;
+    if (to && (e.currentTarget as Node).contains(to)) return;
+    if (dropTarget?.id === note.id) dropTarget = null;
+  }
+
+  function onNoteDrop(e: DragEvent, note: NoteMeta): void {
+    if (!isNoteDrag(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const src = dragNoteId;
+    const target = dropTarget;
+    dragNoteId = null;
+    dropTarget = null;
+    if (!src || !target || target.id !== note.id || src === note.id) return;
+    commitOrder(moveNote(notes, src, target.id, target.pos));
+  }
+
+  function onNoteDragEnd(): void {
+    dragNoteId = null;
+    dropTarget = null;
+  }
+
+  /** 把 fromId 的花笺移动到 targetId 的上/下缘，返回新数组（不改动时返回原数组） */
+  function moveNote(
+    list: NoteMeta[],
+    fromId: string,
+    targetId: string,
+    pos: 'above' | 'below',
+  ): NoteMeta[] {
+    const from = list.findIndex((n) => n.id === fromId);
+    if (from < 0) return list;
+    const next = [...list];
+    const [moved] = next.splice(from, 1);
+    const to = next.findIndex((n) => n.id === targetId);
+    if (to < 0) return list;
+    next.splice(pos === 'below' ? to + 1 : to, 0, moved);
+    return next;
+  }
+
+  function commitOrder(next: NoteMeta[]): void {
+    const order = next.map((n) => n.id);
+    if (order.every((id, i) => id === notes[i]?.id)) return; // 顺序未变化
+    reorderNotesUI(box.id, order);
+    void api.reorderNotes(box.id, order).catch((e: unknown) => {
+      alert(errMsg(e));
+      void refreshNotes(box.id);
+    });
+  }
 </script>
 
 <div class="box">
@@ -82,10 +173,19 @@
             {@const key = `${box.id}/${note.id}`}
             <div
               class="note-row {activeKey === key ? 'active' : ''}"
+              class:dragging={dragNoteId === note.id}
+              class:drop-above={dropTarget?.id === note.id && dropTarget.pos === 'above'}
+              class:drop-below={dropTarget?.id === note.id && dropTarget.pos === 'below'}
               role="button"
               tabindex="-1"
+              draggable="true"
               onclick={() => openNote(box.id, note.id)}
               ondblclick={() => onRenameRequest(box.id, note.id)}
+              ondragstart={(e) => onNoteDragStart(e, note)}
+              ondragover={(e) => onNoteDragOver(e, note)}
+              ondragleave={(e) => onNoteDragLeave(e, note)}
+              ondrop={(e) => onNoteDrop(e, note)}
+              ondragend={onNoteDragEnd}
             >
               <span class="dot" style="background:{note.color}"></span>
               <span class="title" title={note.title}>{note.title || '未命名花笺'}</span>
@@ -180,12 +280,34 @@
     border-radius: 8px;
     margin: 0 4px;
     user-select: none;
+    position: relative;
   }
   .note-row:hover {
     background: var(--bg-hover);
   }
   .note-row.active {
     background: var(--bg-active);
+  }
+  .note-row.dragging {
+    opacity: 0.45;
+  }
+  /* 落点指示线：悬停目标行的上/下缘 */
+  .note-row.drop-above::before,
+  .note-row.drop-below::after {
+    content: '';
+    position: absolute;
+    left: 6px;
+    right: 6px;
+    height: 2px;
+    border-radius: 1px;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  .note-row.drop-above::before {
+    top: -1px;
+  }
+  .note-row.drop-below::after {
+    bottom: -1px;
   }
   .dot {
     width: 10px;
