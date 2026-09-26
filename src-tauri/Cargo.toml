@@ -1,6 +1,6 @@
 [package]
 name = "huajian"
-version = "0.8.0-beta"
+version = "0.8.1-beta"
 description = "花笺 — 所见即所得 Markdown 笔记（花匣 .hxl 打包）"
 authors = ["huajian"]
 edition = "2021"
