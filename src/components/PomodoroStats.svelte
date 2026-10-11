@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import { api, errMsg } from '../lib/api';
-  import type { PomodoroDayStats } from '../lib/types';
+  import { statusMsg } from '../lib/stores';
+  import type { PomodoroBaseline, PomodoroDayStats, PomodoroSession } from '../lib/types';
 
   interface Props {
     onClose: () => void;
@@ -30,6 +32,94 @@
 
   const byDate = $derived(new Map(days.map((d) => [d.date, d])));
 
+  // ---- 区间并集：合计口径与后端一致（重叠只算一次，跨午夜按前一天处理）----
+
+  /** 一天的总秒数上限，并集裁剪边界 */
+  const DAY_SECONDS = 86400;
+
+  const EMPTY_BASELINE: PomodoroBaseline = {
+    standard_seconds: 0,
+    standard_count: 0,
+    forward_seconds: 0,
+    forward_count: 0,
+  };
+
+  /** "HH:MM:SS"（兼容旧数据 "HH:MM"）→ 当天零点起的秒数；无法解析返回 NaN */
+  function hms(text: string): number {
+    if (!text) return Number.NaN;
+    const parts = text.split(':');
+    if (parts.length < 2 || parts.length > 3) return Number.NaN;
+    const h = Number(parts[0]);
+    const m = Number(parts[1]);
+    const sec = parts.length === 3 ? Number(parts[2]) : 0;
+    if (!Number.isFinite(h) || !Number.isFinite(m) || !Number.isFinite(sec)) return Number.NaN;
+    return h * 3600 + m * 60 + sec;
+  }
+
+  function baselineOf(day: PomodoroDayStats): PomodoroBaseline {
+    return day.baseline ?? EMPTY_BASELINE;
+  }
+
+  function countOf(day: PomodoroDayStats | undefined): number {
+    return day ? day.standard_count + day.forward_count : 0;
+  }
+
+  /**
+   * 单条记录的当天区间 [start, end]：
+   * start > end 视为跨午夜（视作前一天开始），整体裁剪到当天 [0, 86400]，
+   * 裁剪后为空（end <= start）返回 null。
+   */
+  function sessionInterval(s: PomodoroSession): [number, number] | null {
+    let start = hms(s.start || s.end || '');
+    const end = hms(s.end || s.start || '');
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+    if (start > end) start -= DAY_SECONDS;
+    const a = Math.max(0, start);
+    const b = Math.min(DAY_SECONDS, end);
+    return b > a ? [a, b] : null;
+  }
+
+  /** 明细整体并集秒数（不分模式，重叠只算一次） */
+  function unionSeconds(sessions: PomodoroSession[]): number {
+    const intervals: [number, number][] = [];
+    for (const s of sessions) {
+      const iv = sessionInterval(s);
+      if (iv !== null) intervals.push(iv);
+    }
+    if (intervals.length === 0) return 0;
+    intervals.sort((p, q) => p[0] - q[0] || p[1] - q[1]);
+    let total = 0;
+    let [curStart, curEnd] = intervals[0];
+    for (let i = 1; i < intervals.length; i += 1) {
+      const [s, e] = intervals[i];
+      if (s <= curEnd) {
+        if (e > curEnd) curEnd = e;
+      } else {
+        total += curEnd - curStart;
+        curStart = s;
+        curEnd = e;
+      }
+    }
+    return total + (curEnd - curStart);
+  }
+
+  /** 当天总计秒 = baseline 两个分项 + 明细整体并集（旧汇总日无明细，即 baseline 合计） */
+  function dayTotalSeconds(day: PomodoroDayStats): number {
+    const b = baselineOf(day);
+    return b.standard_seconds + b.forward_seconds + unionSeconds(day.sessions ?? []);
+  }
+
+  /** 与另一条记录区间相交（严格相交；首尾相接不算）的行标记 */
+  function overlapFlags(sessions: PomodoroSession[]): boolean[] {
+    const intervals = sessions.map(sessionInterval);
+    return intervals.map((a, i) => {
+      if (a === null) return false;
+      return intervals.some(
+        (b, j) => i !== j && b !== null && Math.max(a[0], b[0]) < Math.min(a[1], b[1]),
+      );
+    });
+  }
+
   const totals = $derived.by(() => {
     let seconds = 0;
     let count = 0;
@@ -37,7 +127,7 @@
     let forward = 0;
     let activeDays = 0;
     for (const d of days) {
-      seconds += d.standard_seconds + d.forward_seconds;
+      seconds += dayTotalSeconds(d);
       count += d.standard_count + d.forward_count;
       standard += d.standard_count;
       forward += d.forward_count;
@@ -48,6 +138,12 @@
 
   const selectedStat = $derived(selectedKey === null ? undefined : byDate.get(selectedKey));
   const selectedSessions = $derived(selectedStat?.sessions ?? []);
+  const selectedOverlaps = $derived(overlapFlags(selectedSessions));
+  const selectedHasOverlap = $derived(selectedOverlaps.some(Boolean));
+  /** 旧汇总日：没有明细但计数 > 0（不可编辑/删除） */
+  const selectedIsLegacySummary = $derived(
+    selectedStat !== undefined && selectedSessions.length === 0 && countOf(selectedStat) > 0,
+  );
 
   const selectedLabel = $derived.by(() => {
     if (selectedKey === null) return '';
@@ -58,10 +154,9 @@
 
   const selectedSummary = $derived.by(() => {
     if (!selectedStat) return '';
-    const count = selectedStat.standard_count + selectedStat.forward_count;
+    const count = countOf(selectedStat);
     if (count === 0) return '';
-    const seconds = selectedStat.standard_seconds + selectedStat.forward_seconds;
-    return `${count} 个番茄 · ${formatDuration(seconds)}`;
+    return `${count} 个番茄 · ${formatDuration(dayTotalSeconds(selectedStat))}`;
   });
 
   // 周一为一周起点，前后补齐空位
@@ -98,6 +193,133 @@
     }
   }
 
+  // ---- 状态栏提示（与 pomodoro.ts 的 notify 同款：8 秒后清空）----
+
+  const MESSAGE_MS = 8000;
+  let msgTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function notify(text: string): void {
+    statusMsg.set(text);
+    if (msgTimer !== null) clearTimeout(msgTimer);
+    msgTimer = setTimeout(() => {
+      msgTimer = null;
+      statusMsg.set('');
+    }, MESSAGE_MS);
+  }
+
+  onDestroy(() => {
+    if (msgTimer !== null) clearTimeout(msgTimer);
+  });
+
+  // ---- 行内改短 / 删除 ----
+
+  let editingId = $state<string | null>(null);
+  let editValue = $state('');
+  let confirmingId = $state<string | null>(null);
+  let busyId = $state<string | null>(null);
+
+  /** 切换选中日期时收起行内编辑/确认，避免状态串到别的记录 */
+  $effect(() => {
+    if (selectedKey === null) return;
+    editingId = null;
+    editValue = '';
+    confirmingId = null;
+  });
+
+  /** 可改短的分钟上限；< 1 表示原时长不足 1 分钟，禁止编辑 */
+  function maxMinutes(s: PomodoroSession): number {
+    return Math.floor(s.seconds / 60);
+  }
+
+  function canEdit(s: PomodoroSession): boolean {
+    return maxMinutes(s) >= 1 && busyId === null;
+  }
+
+  function startEdit(s: PomodoroSession): void {
+    if (!canEdit(s)) {
+      if (maxMinutes(s) < 1) notify('原时长不足 1 分钟，不能改短');
+      return;
+    }
+    confirmingId = null;
+    editingId = s.id;
+    editValue = String(maxMinutes(s));
+  }
+
+  function cancelEdit(): void {
+    editingId = null;
+    editValue = '';
+  }
+
+  function focusInput(node: HTMLInputElement): void {
+    node.focus();
+    node.select();
+  }
+
+  async function submitEdit(s: PomodoroSession): Promise<void> {
+    const max = maxMinutes(s);
+    if (max < 1) {
+      cancelEdit();
+      return;
+    }
+    let minutes = Number.parseInt(editValue, 10);
+    if (!Number.isFinite(minutes)) minutes = max;
+    let clamped = false;
+    if (minutes > max) {
+      minutes = max;
+      clamped = true;
+    } else if (minutes < 1) {
+      minutes = 1;
+    }
+    const seconds = minutes * 60;
+    // 没改（例如输入超过上限但原值已是上限）：只提示，不写盘
+    if (seconds === s.seconds) {
+      if (clamped) notify('只能减短，不能加长');
+      cancelEdit();
+      return;
+    }
+    const date = selectedStat?.date;
+    if (!date) {
+      cancelEdit();
+      return;
+    }
+    busyId = s.id;
+    try {
+      await api.shortenPomodoroSession(date, s.id, seconds);
+      notify(clamped ? '只能减短，不能加长' : `已改为 ${minutes} 分钟`);
+    } catch (e) {
+      notify(`改短失败: ${errMsg(e)}`);
+    } finally {
+      busyId = null;
+      cancelEdit();
+      await load();
+    }
+  }
+
+  async function doDelete(s: PomodoroSession): Promise<void> {
+    const date = selectedStat?.date;
+    if (!date) return;
+    busyId = s.id;
+    try {
+      await api.deletePomodoroSession(date, s.id);
+      notify('已删除该条记录');
+    } catch (e) {
+      notify(`删除失败: ${errMsg(e)}`);
+    } finally {
+      busyId = null;
+      confirmingId = null;
+      await load();
+    }
+  }
+
+  async function openDataLocation(): Promise<void> {
+    try {
+      const path = await api.huazhongPath();
+      await api.revealInFolder(path);
+    } catch (e) {
+      notify(`打开数据位置失败: ${errMsg(e)}`);
+    }
+  }
+
   function keyOf(day: number): string {
     return dateKey(year, month, day);
   }
@@ -109,7 +331,7 @@
   function minutesOf(day: number): number {
     const s = statOf(day);
     if (!s) return 0;
-    return Math.round((s.standard_seconds + s.forward_seconds) / 60);
+    return Math.round(dayTotalSeconds(s) / 60);
   }
 
   function isToday(day: number): boolean {
@@ -163,16 +385,19 @@
     return m === 0 ? `${h} 小时` : `${h} 小时 ${m} 分`;
   }
 
+  /** 明细行时长：不足 1 分钟显示秒，避免四舍五入成 "0/1 分钟" */
+  function formatSessionDuration(seconds: number): string {
+    if (seconds < 60) return `${seconds} 秒`;
+    return formatDuration(seconds);
+  }
+
   function cellTitle(day: number): string {
     const s = statOf(day);
-    if (!s || s.standard_count + s.forward_count === 0) return `${keyOf(day)} · 无记录（点击查看）`;
-    const parts = [keyOf(day)];
-    if (s.standard_count > 0) {
-      parts.push(`标准 ${s.standard_count} 个（${formatDuration(s.standard_seconds)}）`);
-    }
-    if (s.forward_count > 0) {
-      parts.push(`正向 ${s.forward_count} 个（${formatDuration(s.forward_seconds)}）`);
-    }
+    if (!s || countOf(s) === 0) return `${keyOf(day)} · 无记录（点击查看）`;
+    const parts = [keyOf(day), `${countOf(s)} 个番茄`, formatDuration(dayTotalSeconds(s))];
+    if (s.standard_count > 0) parts.push(`标准 ${s.standard_count} 个`);
+    if (s.forward_count > 0) parts.push(`正向 ${s.forward_count} 个`);
+    if (overlapFlags(s.sessions ?? []).some(Boolean)) parts.push('含重叠，已去重计时');
     return parts.join(' · ');
   }
 
@@ -277,22 +502,120 @@
           <span class="day-title">{selectedLabel}</span>
           {#if selectedSummary}<span class="day-sub">{selectedSummary}</span>{/if}
         </div>
+
+        {#if selectedHasOverlap}
+          <div class="overlap-note" title="同一天内重叠的区间在合计里只算一次">
+            含重叠记录：重叠部分不重复计时
+          </div>
+        {/if}
+
         {#if selectedSessions.length > 0}
           <ul class="sessions">
-            {#each selectedSessions as s}
-              <li>
+            {#each selectedSessions as s, i (s.id)}
+              <li class:busy={busyId === s.id}>
                 <span class="at">{s.at}</span>
                 <span class="mode" class:forward={s.mode === 'forward'}>
                   {s.mode === 'forward' ? '正向' : '标准'}
                 </span>
-                <span class="dur">{formatDuration(s.seconds)}</span>
+                {#if selectedOverlaps[i]}
+                  <span class="overlap" title="与另一条记录时间重叠；合计按区间并集去重，不重复计时">
+                    重叠
+                  </span>
+                {/if}
+
+                <span class="grow"></span>
+
+                {#if editingId === s.id}
+                  <span class="edit">
+                    <input
+                      class="edit-input"
+                      type="number"
+                      inputmode="numeric"
+                      min="1"
+                      max={maxMinutes(s)}
+                      step="1"
+                      value={editValue}
+                      aria-label="改短后的分钟数"
+                      use:focusInput
+                      oninput={(e) => (editValue = e.currentTarget.value)}
+                      onkeydown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void submitEdit(s);
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          cancelEdit();
+                        }
+                      }}
+                    />
+                    <span class="unit">分</span>
+                    <button class="mini" onclick={() => void submitEdit(s)}>确定</button>
+                    <button class="mini" onclick={cancelEdit}>取消</button>
+                  </span>
+                {:else}
+                  <button
+                    class="dur-btn"
+                    disabled={!canEdit(s)}
+                    title={maxMinutes(s) < 1
+                      ? '原时长不足 1 分钟，不能改短'
+                      : `点击改短（最多 ${maxMinutes(s)} 分钟，只能减短）`}
+                    onclick={() => startEdit(s)}
+                  >
+                    {formatSessionDuration(s.seconds)}
+                  </button>
+                {/if}
+
+                {#if confirmingId === s.id}
+                  <span class="confirm">
+                    <button
+                      class="mini danger"
+                      disabled={busyId !== null}
+                      onclick={() => void doDelete(s)}
+                    >
+                      确认
+                    </button>
+                    <button class="mini" onclick={() => (confirmingId = null)}>取消</button>
+                  </span>
+                {:else}
+                  <button
+                    class="mini del"
+                    title="删除这条记录"
+                    disabled={busyId !== null}
+                    onclick={() => {
+                      cancelEdit();
+                      confirmingId = s.id;
+                    }}
+                  >
+                    删除
+                  </button>
+                {/if}
               </li>
             {/each}
           </ul>
+        {:else if selectedIsLegacySummary}
+          <div class="legacy">
+            <span class="legacy-tag">旧版本汇总 · 无明细</span>
+            <span class="dim">
+              合计 {selectedStat ? formatDuration(dayTotalSeconds(selectedStat)) : '0 分钟'} ·
+              此日期无单条记录，不能编辑或删除
+            </span>
+          </div>
         {:else}
           <div class="empty">当日无记录</div>
         {/if}
       {/if}
+    </div>
+
+    <div class="sep"></div>
+
+    <div class="foot">
+      <button
+        class="ghost-btn"
+        title="在文件管理器中显示 花钟.hz"
+        onclick={() => void openDataLocation()}
+      >
+        打开数据位置
+      </button>
     </div>
   </div>
 </aside>
@@ -459,6 +782,13 @@
     font-size: 11px;
     color: var(--text-dim);
   }
+  .overlap-note {
+    font-size: 11px;
+    color: var(--text-dim);
+    border-left: 2px solid var(--accent);
+    padding-left: 6px;
+    margin-bottom: 6px;
+  }
   .sessions {
     list-style: none;
     margin: 0;
@@ -466,14 +796,18 @@
   }
   .sessions li {
     display: flex;
-    align-items: baseline;
-    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 5px;
     padding: 5px 2px;
     font-size: 12px;
     border-bottom: 1px dashed var(--border);
   }
   .sessions li:last-child {
     border-bottom: none;
+  }
+  .sessions li.busy {
+    opacity: 0.55;
   }
   .at {
     color: var(--text-dim);
@@ -490,15 +824,99 @@
     color: var(--accent);
     border-color: var(--accent);
   }
-  .dur {
-    margin-left: auto;
+  .overlap {
+    font-size: 10px;
+    padding: 0 4px;
+    border-radius: 4px;
+    border: 1px dashed var(--accent);
+    color: var(--accent);
+    cursor: help;
+  }
+  .grow {
+    flex: 1;
+    min-width: 4px;
+  }
+  .dur-btn {
+    font: inherit;
+    font-size: 12px;
     color: var(--text);
     font-variant-numeric: tabular-nums;
+    padding: 1px 4px;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background: transparent;
+    cursor: pointer;
+  }
+  .dur-btn:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .dur-btn:disabled {
+    color: var(--text-dim);
+    cursor: not-allowed;
+  }
+  .edit,
+  .confirm {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .edit-input {
+    width: 46px;
+    padding: 1px 4px;
+    font: inherit;
+    font-size: 12px;
+    color: var(--text);
+    background: var(--bg);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    font-variant-numeric: tabular-nums;
+  }
+  .unit {
+    font-size: 11px;
+    color: var(--text-dim);
+  }
+  .mini {
+    font: inherit;
+    font-size: 11px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    background: var(--bg-panel);
+    color: var(--text-dim);
+    cursor: pointer;
+  }
+  .mini:hover:not(:disabled) {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .mini:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .mini.del:hover:not(:disabled),
+  .mini.danger {
+    color: var(--danger);
+    border-color: var(--danger);
+  }
+  .legacy {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    padding: 2px 0;
+  }
+  .legacy-tag {
+    font-size: 12px;
+    color: var(--text);
   }
   .empty {
     font-size: 12px;
     color: var(--text-dim);
     padding: 6px 0;
+  }
+  .foot {
+    display: flex;
+    justify-content: flex-end;
   }
   .icon-btn:disabled {
     opacity: 0.4;

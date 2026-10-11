@@ -9,7 +9,7 @@
   import NewBoxModal from './components/NewBoxModal.svelte';
   import ThemePicker from './components/ThemePicker.svelte';
   import { api, errMsg } from './lib/api';
-  import { openBox, widthMode } from './lib/stores';
+  import { openBox, statusMsg, widthMode } from './lib/stores';
   import { themeById } from './lib/themes';
   import type { WidthMode } from './lib/types';
 
@@ -23,6 +23,20 @@
   let showThemes = $state(false);
   let renameTarget = $state<{ boxId: string; noteId: string } | null>(null);
   let drag = $state(false);
+
+  /** 启动提示（数据迁移等）的自动清空计时器，与 pomodoro.ts 的 notify 同款 */
+  const STARTUP_NOTICE_MS = 8000;
+  let startupNoticeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function showStartupNotice(text: string): void {
+    statusMsg.set(text);
+    if (startupNoticeTimer !== null) clearTimeout(startupNoticeTimer);
+    startupNoticeTimer = setTimeout(() => {
+      startupNoticeTimer = null;
+      // 期间若被别的提示（如番茄钟）覆盖，就不要清掉新内容
+      statusMsg.update((cur) => (cur === text ? '' : cur));
+    }, STARTUP_NOTICE_MS);
+  }
 
   function applyTheme(id: string, dark: boolean): void {
     const t = themeById(id);
@@ -137,6 +151,13 @@
       void api.getStartupHx().then((p) => {
         if (p) void openHxPath(p);
       });
+      // 一次性启动提示（旧数据迁移成功/失败），后端读取后即清空
+      void api
+        .getStartupNotice()
+        .then((notice) => {
+          if (notice) showStartupNotice(notice);
+        })
+        .catch(() => {});
     })();
 
     const cleanup: (() => void)[] = [];
@@ -170,6 +191,10 @@
     return () => {
       for (const un of cleanup) un();
       window.removeEventListener('keydown', keyHandler);
+      if (startupNoticeTimer !== null) {
+        clearTimeout(startupNoticeTimer);
+        startupNoticeTimer = null;
+      }
     };
   });
 </script>

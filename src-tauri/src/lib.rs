@@ -4,12 +4,15 @@ use tauri::{Emitter, Manager};
 
 mod box_store;
 mod commands;
+/// 花钟数据层：与花钟 app 的同名文件逐字节相同
+pub mod huazhong;
 mod models;
 mod note_doc;
-mod pomodoro_stats;
+mod paths;
 mod settings;
 
 use box_store::BoxStore;
+use commands::StartupNotice;
 use settings::AppState;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,15 +25,22 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            // 用户数据根目录与 app 标识符无关：<config_dir>/huajian
             let config_dir = app
                 .path()
-                .app_config_dir()
-                .unwrap_or_else(|_| std::env::temp_dir().join("huajian-config"));
+                .config_dir()
+                .unwrap_or_else(|_| std::env::temp_dir());
+            let root = paths::data_root(&config_dir);
+
+            // 旧版数据一次性导入（幂等；出错不改名旧文件，下次启动重试）
+            let notice = paths::migrate_legacy(&root, &config_dir);
+
             let state = AppState {
-                settings: settings::load(&config_dir),
+                settings: settings::load(&paths::note_settings_path(&root)),
             };
             app.manage(Mutex::new(state));
-            app.manage(Mutex::new(pomodoro_stats::load(&config_dir)));
+            app.manage(Mutex::new(huazhong::load(&root)));
+            app.manage(Mutex::new(StartupNotice(notice)));
             Ok(())
         })
         .plugin(
@@ -70,9 +80,14 @@ pub fn run() {
             commands::reorder_boxes,
             commands::get_startup_hx,
             commands::reveal_in_folder,
+            commands::get_pomodoro_settings,
             commands::set_pomodoro_settings,
             commands::record_pomodoro,
             commands::get_pomodoro_stats,
+            commands::delete_pomodoro_session,
+            commands::shorten_pomodoro_session,
+            commands::huazhong_path,
+            commands::get_startup_notice,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

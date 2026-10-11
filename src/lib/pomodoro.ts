@@ -118,8 +118,9 @@ export function initPomodoro(): () => void {
   if (timer !== null) return () => {};
   void (async () => {
     try {
-      const settings = await api.getSettings();
-      const loaded = clampSettings(settings.pomodoro ?? DEFAULT_SETTINGS);
+      // 番茄钟设置独立存放于 花钟.hz，不再来自 settings.json
+      const settings = await api.getPomodoroSettings();
+      const loaded = clampSettings(settings ?? DEFAULT_SETTINGS);
       pomodoro.update((cur) => (cur.phase === 'idle' ? { ...cur, settings: loaded } : cur));
     } catch (e) {
       notify(`读取番茄钟设置失败: ${errMsg(e)}`);

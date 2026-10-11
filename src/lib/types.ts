@@ -39,8 +39,6 @@ export interface AppSettings {
   width_mode: WidthMode;
   /** 已打开花匣的有序路径（启动时按此顺序自动打开） */
   boxes: string[];
-  /** 番茄钟设置 */
-  pomodoro: PomodoroSettings;
 }
 
 /** 番茄钟计时模式：标准（倒计时）/ 正向（正计时，手动结束） */
@@ -59,21 +57,39 @@ export interface PomodoroSettings {
 
 /** 单次番茄记录（对应后端 PomodoroSession） */
 export interface PomodoroSession {
-  /** 完成时刻（本地时间 HH:MM） */
+  /** 记录 id（uuid v4；旧数据缺失时由后端在读取阶段补发） */
+  id: string;
+  /** 完成时刻（本地时间 HH:MM，由 end 派生，仅展示用） */
   at: string;
   seconds: number;
   mode: PomodoroMode;
+  /** 本地墙上时钟 HH:MM:SS；start = end − seconds */
+  start: string;
+  /** 本地墙上时钟 HH:MM:SS；完成时取当前本地时刻 */
+  end: string;
 }
 
-/** 单日番茄统计（对应后端 PomodoroDayStats） */
-export interface PomodoroDayStats {
-  /** 本地日期 YYYY-MM-DD */
-  date: string;
+/** 旧版"只有合计、没有明细"的日期的原始合计（新记录一律为 0，为 0 时可省略） */
+export interface PomodoroBaseline {
   standard_seconds: number;
   standard_count: number;
   forward_seconds: number;
   forward_count: number;
-  /** 当日单次记录（旧数据文件没有该字段时为空数组） */
+}
+
+/** 单日番茄统计（对应后端 PomodoroDayStats，合计为后端重算值） */
+export interface PomodoroDayStats {
+  /** 本地日期 YYYY-MM-DD */
+  date: string;
+  /** 旧汇总日才有值；契约允许为 0 时省略，读取时按全 0 处理 */
+  baseline?: PomodoroBaseline;
+  /** 该模式次数（baseline 计数 + 明细条数，派生缓存） */
+  standard_count: number;
+  forward_count: number;
+  /** 该模式秒数（baseline 秒 + 该模式明细并集，派生缓存；界面不展示分项时长） */
+  standard_seconds: number;
+  forward_seconds: number;
+  /** 当日单次记录（旧汇总日为空数组） */
   sessions: PomodoroSession[];
 }
 

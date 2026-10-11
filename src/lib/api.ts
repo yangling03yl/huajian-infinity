@@ -1,5 +1,12 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { AppSettings, BoxInfo, NoteMeta, PomodoroDayStats, SnapshotMeta } from './types';
+import type {
+  AppSettings,
+  BoxInfo,
+  NoteMeta,
+  PomodoroDayStats,
+  PomodoroSettings,
+  SnapshotMeta,
+} from './types';
 
 export function errMsg(e: unknown): string {
   if (typeof e === 'string') return e;
@@ -42,12 +49,21 @@ export const api = {
     invoke<void>('set_appearance', { theme, dark, sidebarWidth, widthMode }),
   reorderBoxes: (order: string[]) => invoke<void>('reorder_boxes', { order }),
   getStartupHx: () => invoke<string | null>('get_startup_hx'),
+  /** 一次性启动提示（数据迁移成功/失败）；后端读取后即清空 */
+  getStartupNotice: () => invoke<string | null>('get_startup_notice'),
   revealInFolder: (path: string) =>
     invoke<void>('reveal_in_folder', { path }).catch(() => {}),
+  /** 花钟数据文件（花钟.hz）的绝对路径，供「打开数据位置」使用 */
+  huazhongPath: () => invoke<string>('huazhong_path'),
+  getPomodoroSettings: () => invoke<PomodoroSettings>('get_pomodoro_settings'),
   setPomodoroSettings: (mode: string, focusMinutes: number, breakMinutes: number, loops: number) =>
     invoke<void>('set_pomodoro_settings', { mode, focusMinutes, breakMinutes, loops }),
   recordPomodoro: (seconds: number, mode: string) =>
     invoke<void>('record_pomodoro', { seconds, mode }),
   getPomodoroStats: (year: number, month: number) =>
     invoke<PomodoroDayStats[]>('get_pomodoro_stats', { year, month }),
+  deletePomodoroSession: (date: string, id: string) =>
+    invoke<void>('delete_pomodoro_session', { date, id }),
+  shortenPomodoroSession: (date: string, id: string, seconds: number) =>
+    invoke<void>('shorten_pomodoro_session', { date, id, seconds }),
 };

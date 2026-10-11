@@ -3,7 +3,10 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 用户设置，存放于系统配置目录（Windows: %APPDATA%\com.huajian.app，Linux: ~/.config/com.huajian.app）
+/// 花笺自己的用户设置（**不含番茄钟**，番茄钟设置住在 花钟.hz）。
+///
+/// 存放位置由调用方传入（见 `crate::paths::note_settings_path`）；
+/// 正常是 `<config_dir>/huajian/花笺/settings.json`。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     #[serde(default = "default_theme")]
@@ -22,40 +25,12 @@ pub struct AppSettings {
     /// 已打开花匣的有序路径（启动时按此顺序自动打开）
     #[serde(default)]
     pub boxes: Vec<String>,
-    /// 番茄钟设置
-    #[serde(default)]
-    pub pomodoro: PomodoroSettings,
 }
 
 /// 正文宽度模式：靠左 75%（默认）
 pub const WIDTH_MODE_LEFT75: &str = "left75";
 /// 正文宽度模式：铺满窗口
 pub const WIDTH_MODE_FULL: &str = "full";
-
-/// 番茄钟计时模式：标准（倒计时）
-pub const POMODORO_MODE_STANDARD: &str = "standard";
-/// 番茄钟计时模式：正向（正计时，手动结束）
-pub const POMODORO_MODE_FORWARD: &str = "forward";
-
-pub const MIN_FOCUS_MINUTES: u32 = 1;
-pub const MAX_FOCUS_MINUTES: u32 = 180;
-pub const MIN_BREAK_MINUTES: u32 = 0;
-pub const MAX_BREAK_MINUTES: u32 = 60;
-pub const MIN_LOOPS: u32 = 1;
-pub const MAX_LOOPS: u32 = 12;
-
-/// 番茄钟设置：模式、单个番茄时长、循环内相邻番茄之间的休息时长、一次会话的番茄个数
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct PomodoroSettings {
-    #[serde(default = "default_pomodoro_mode")]
-    pub mode: String,
-    #[serde(default = "default_focus_minutes")]
-    pub focus_minutes: u32,
-    #[serde(default = "default_break_minutes")]
-    pub break_minutes: u32,
-    #[serde(default = "default_loops")]
-    pub loops: u32,
-}
 
 fn default_theme() -> String {
     "warm-paper".into()
@@ -69,46 +44,6 @@ fn default_width_mode() -> String {
     WIDTH_MODE_LEFT75.into()
 }
 
-fn default_pomodoro_mode() -> String {
-    POMODORO_MODE_STANDARD.into()
-}
-
-fn default_focus_minutes() -> u32 {
-    25
-}
-
-fn default_break_minutes() -> u32 {
-    5
-}
-
-fn default_loops() -> u32 {
-    4
-}
-
-impl Default for PomodoroSettings {
-    fn default() -> Self {
-        Self {
-            mode: default_pomodoro_mode(),
-            focus_minutes: default_focus_minutes(),
-            break_minutes: default_break_minutes(),
-            loops: default_loops(),
-        }
-    }
-}
-
-impl PomodoroSettings {
-    /// 把外部传入的值夹取到合法范围，未知模式回落到标准模式
-    pub fn sanitized(mut self) -> Self {
-        if self.mode != POMODORO_MODE_FORWARD {
-            self.mode = POMODORO_MODE_STANDARD.into();
-        }
-        self.focus_minutes = self.focus_minutes.clamp(MIN_FOCUS_MINUTES, MAX_FOCUS_MINUTES);
-        self.break_minutes = self.break_minutes.clamp(MIN_BREAK_MINUTES, MAX_BREAK_MINUTES);
-        self.loops = self.loops.clamp(MIN_LOOPS, MAX_LOOPS);
-        self
-    }
-}
-
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -118,7 +53,6 @@ impl Default for AppSettings {
             width_mode: Some(default_width_mode()),
             full_width: None,
             boxes: Vec::new(),
-            pomodoro: PomodoroSettings::default(),
         }
     }
 }
@@ -156,12 +90,9 @@ impl AppSettings {
     }
 }
 
-fn settings_path(config_dir: &Path) -> PathBuf {
-    config_dir.join("settings.json")
-}
-
-pub fn load(config_dir: &Path) -> AppSettings {
-    match fs::read(settings_path(config_dir))
+/// 读取设置文件；缺失/损坏返回默认值。`path` 是 settings.json 的完整路径。
+pub fn load(path: &Path) -> AppSettings {
+    match fs::read(path)
         .ok()
         .and_then(|bytes| serde_json::from_slice::<AppSettings>(&bytes).ok())
     {
@@ -170,19 +101,36 @@ pub fn load(config_dir: &Path) -> AppSettings {
     }
 }
 
-pub fn save(config_dir: &Path, settings: &AppSettings) -> Result<(), String> {
-    fs::create_dir_all(config_dir).map_err(|e| format!("创建配置目录失败: {e}"))?;
-    let path = settings_path(config_dir);
-    let tmp = config_dir.join("settings.json.tmp");
+/// 原子保存设置文件（先写 `<path>.tmp` 再 rename），自动创建父目录。
+pub fn save(path: &Path, settings: &AppSettings) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("创建配置目录失败: {e}"))?;
+    }
+    let tmp = tmp_path(path);
     let json = serde_json::to_vec_pretty(settings).map_err(|e| e.to_string())?;
     fs::write(&tmp, json).map_err(|e| format!("写入配置文件失败: {e}"))?;
-    fs::rename(&tmp, &path).map_err(|e| format!("保存配置文件失败: {e}"))?;
+    fs::rename(&tmp, path).map_err(|e| format!("保存配置文件失败: {e}"))?;
     Ok(())
+}
+
+/// `settings.json` → `settings.json.tmp`
+fn tmp_path(path: &Path) -> PathBuf {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_default();
+    path.with_file_name(format!("{name}.tmp"))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::paths;
+
+    /// 测试里把 `<dir>` 当作数据根目录
+    fn settings_path(dir: &Path) -> PathBuf {
+        paths::note_settings_path(dir)
+    }
 
     #[test]
     fn settings_roundtrip() {
@@ -191,17 +139,12 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
 
         // 缺失时返回默认值
-        let s = load(&dir);
+        let s = load(&settings_path(&dir));
         assert_eq!(s.theme, "warm-paper");
         assert!(!s.dark);
         assert_eq!(s.sidebar_width, 300);
         assert_eq!(s.width_mode(), WIDTH_MODE_LEFT75, "默认应为靠左 75%");
         assert!(s.boxes.is_empty());
-        assert_eq!(s.pomodoro, PomodoroSettings::default());
-        assert_eq!(s.pomodoro.mode, POMODORO_MODE_STANDARD);
-        assert_eq!(s.pomodoro.focus_minutes, 25);
-        assert_eq!(s.pomodoro.break_minutes, 5);
-        assert_eq!(s.pomodoro.loops, 4);
 
         // 保存并重新读取
         let mut s2 = AppSettings::default();
@@ -210,43 +153,45 @@ mod tests {
         s2.sidebar_width = 420;
         s2.width_mode = Some(WIDTH_MODE_FULL.into());
         s2.boxes = vec!["/a/one.hxl".into(), "/b/two.hxl".into()];
-        s2.pomodoro = PomodoroSettings {
-            mode: POMODORO_MODE_FORWARD.into(),
-            focus_minutes: 50,
-            break_minutes: 10,
-            loops: 3,
-        };
-        save(&dir, &s2).unwrap();
+        save(&settings_path(&dir), &s2).unwrap();
 
-        let s3 = load(&dir);
+        let s3 = load(&settings_path(&dir));
         assert_eq!(s3.theme, "ink");
         assert!(s3.dark);
         assert_eq!(s3.sidebar_width, 420);
         assert_eq!(s3.width_mode(), WIDTH_MODE_FULL);
         assert_eq!(s3.boxes, vec!["/a/one.hxl", "/b/two.hxl"]);
-        assert_eq!(s3.pomodoro, s2.pomodoro);
+
+        // 落在 花笺/settings.json 里
+        assert!(paths::note_settings_path(&dir).exists());
 
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// 旧版 settings.json（无 pomodoro 字段）必须能读，并补上默认番茄钟设置
+    /// 旧版 settings.json（含 pomodoro 字段）必须能读，多余字段直接忽略
     #[test]
-    fn legacy_settings_without_pomodoro() {
+    fn legacy_settings_without_pomodoro_field() {
         let dir = std::env::temp_dir().join("huajian_settings_legacy_test");
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(paths::note_dir(&dir)).unwrap();
 
         fs::write(
             settings_path(&dir),
-            br#"{"theme":"bamboo","dark":true,"sidebar_width":360,"boxes":["/x.hxl"]}"#,
+            br#"{"theme":"bamboo","dark":true,"sidebar_width":360,"boxes":["/x.hxl"],
+                 "pomodoro":{"mode":"forward","focus_minutes":50}}"#,
         )
         .unwrap();
 
-        let s = load(&dir);
+        let s = load(&settings_path(&dir));
         assert_eq!(s.theme, "bamboo");
         assert!(s.dark);
         assert_eq!(s.sidebar_width, 360);
-        assert_eq!(s.pomodoro, PomodoroSettings::default());
+        assert_eq!(s.boxes, vec!["/x.hxl"]);
+
+        // 保存后不再写出 pomodoro
+        save(&settings_path(&dir), &s).unwrap();
+        let raw = fs::read_to_string(settings_path(&dir)).unwrap();
+        assert!(!raw.contains("pomodoro"), "{raw}");
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -256,7 +201,7 @@ mod tests {
     fn legacy_settings_without_width_mode() {
         let dir = std::env::temp_dir().join("huajian_settings_legacy_width_test");
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(paths::note_dir(&dir)).unwrap();
 
         fs::write(
             settings_path(&dir),
@@ -264,7 +209,7 @@ mod tests {
         )
         .unwrap();
 
-        let s = load(&dir);
+        let s = load(&settings_path(&dir));
         assert_eq!(s.width_mode(), WIDTH_MODE_LEFT75, "缺字段时应用新默认靠左 75%");
 
         let _ = fs::remove_dir_all(&dir);
@@ -275,19 +220,19 @@ mod tests {
     fn legacy_full_width_migrates_to_mode() {
         let dir = std::env::temp_dir().join("huajian_settings_migrate_test");
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(paths::note_dir(&dir)).unwrap();
 
         // full_width: true → 铺满
         fs::write(settings_path(&dir), br#"{"full_width":true}"#).unwrap();
-        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_FULL);
+        assert_eq!(load(&settings_path(&dir)).width_mode(), WIDTH_MODE_FULL);
 
         // full_width: false（旧的「专注阅读」档）→ 模式已删除，回落到靠左 75%
         fs::write(settings_path(&dir), br#"{"full_width":false}"#).unwrap();
-        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_LEFT75);
+        assert_eq!(load(&settings_path(&dir)).width_mode(), WIDTH_MODE_LEFT75);
 
         // 老配置里已保存的 narrow 同样回落到靠左 75%
         fs::write(settings_path(&dir), br#"{"width_mode":"narrow"}"#).unwrap();
-        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_LEFT75);
+        assert_eq!(load(&settings_path(&dir)).width_mode(), WIDTH_MODE_LEFT75);
 
         // 已写 width_mode 的优先，不受遗留 full_width 影响
         fs::write(
@@ -295,11 +240,11 @@ mod tests {
             br#"{"width_mode":"left75","full_width":true}"#,
         )
         .unwrap();
-        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_LEFT75);
+        assert_eq!(load(&settings_path(&dir)).width_mode(), WIDTH_MODE_LEFT75);
 
         // 未知模式回落到默认
         fs::write(settings_path(&dir), br#"{"width_mode":"wat"}"#).unwrap();
-        assert_eq!(load(&dir).width_mode(), WIDTH_MODE_LEFT75);
+        assert_eq!(load(&settings_path(&dir)).width_mode(), WIDTH_MODE_LEFT75);
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -309,9 +254,9 @@ mod tests {
     fn save_drops_legacy_full_width() {
         let dir = std::env::temp_dir().join("huajian_settings_drop_test");
         let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
+        fs::create_dir_all(paths::note_dir(&dir)).unwrap();
 
-        save(&dir, &AppSettings::default()).unwrap();
+        save(&settings_path(&dir), &AppSettings::default()).unwrap();
         let raw = fs::read_to_string(settings_path(&dir)).unwrap();
         assert!(!raw.contains("full_width"), "不应再写出 full_width: {raw}");
         assert!(raw.contains("width_mode"));
@@ -319,30 +264,15 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
+    /// 保存到还存在的多级目录时自动建目录
     #[test]
-    fn pomodoro_sanitized_clamps_range() {
-        let s = PomodoroSettings {
-            mode: "unknown".into(),
-            focus_minutes: 0,
-            break_minutes: 999,
-            loops: 0,
-        }
-        .sanitized();
-        assert_eq!(s.mode, POMODORO_MODE_STANDARD);
-        assert_eq!(s.focus_minutes, MIN_FOCUS_MINUTES);
-        assert_eq!(s.break_minutes, MAX_BREAK_MINUTES);
-        assert_eq!(s.loops, MIN_LOOPS);
+    fn save_creates_parent_directory() {
+        let dir = std::env::temp_dir().join("huajian_settings_mkdir_test");
+        let _ = fs::remove_dir_all(&dir);
 
-        let f = PomodoroSettings {
-            mode: POMODORO_MODE_FORWARD.into(),
-            focus_minutes: 400,
-            break_minutes: 0,
-            loops: 99,
-        }
-        .sanitized();
-        assert_eq!(f.mode, POMODORO_MODE_FORWARD);
-        assert_eq!(f.focus_minutes, MAX_FOCUS_MINUTES);
-        assert_eq!(f.break_minutes, 0);
-        assert_eq!(f.loops, MAX_LOOPS);
+        save(&settings_path(&dir), &AppSettings::default()).unwrap();
+        assert!(paths::note_settings_path(&dir).exists());
+
+        let _ = fs::remove_dir_all(&dir);
     }
 }
