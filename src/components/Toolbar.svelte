@@ -77,21 +77,62 @@
   }
 </script>
 
+<!--
+  图标按钮统一为 26×26（与全局 .icon-btn 一致），不再带文字：
+  文字会随缩放把整行撑宽，高缩放下右侧按钮被挤出可视区；
+  说明改由 title 悬停提示 + aria-label 无障碍名称承担。
+-->
 <div class="toolbar">
   <div class="toolbar-inner">
-    <div class="group history-group" title="修改历史：最近十次修改（不产生新记录，仅在本会话内）">
+    <div class="group history-group" role="group" aria-label="修改历史" title="修改历史：最近十次修改（不产生新记录，仅在本会话内）">
       <button
-        class="action-btn"
+        class="tool-btn"
+        type="button"
+        aria-label="退回"
         title="退回：回到上一次修改后的内容"
         disabled={!editor || !canBack || historyBusy}
         onclick={onHistoryBack}
-      >↶ 退回</button>
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d="M9 14 4 9l5-5" />
+          <path d="M4 9h10.5a5.5 5.5 0 0 1 0 11H11" />
+        </svg>
+      </button>
       <button
-        class="action-btn"
+        class="tool-btn"
+        type="button"
+        aria-label="前进"
         title="前进：撤回退回"
         disabled={!editor || !canForward || historyBusy}
         onclick={onHistoryForward}
-      >↷ 前进</button>
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d="m15 14 5-5-5-5" />
+          <path d="M20 9H9.5A5.5 5.5 0 0 0 4 14.5 5.5 5.5 0 0 0 9.5 20H13" />
+        </svg>
+      </button>
     </div>
 
     <label class="group" title="标题样式（Ctrl+1~6 标题，Ctrl+0 正文）">
@@ -141,17 +182,88 @@
     </span>
   {/if}
 
-    <div class="actions">
-      <button class="action-btn" title="复制快照：保存当前正文为快照并进入对比" disabled={!editor} onclick={onCreateSnapshot}>⧉ 复制快照</button>
+    <div class="actions" role="group" aria-label="快照与导出">
       <button
-        class="action-btn"
+        class="tool-btn"
+        type="button"
+        aria-label="复制快照"
+        title="复制快照：保存当前正文为快照并进入对比"
+        disabled={!editor}
+        onclick={onCreateSnapshot}
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <rect x="8" y="8" width="14" height="14" rx="2" />
+          <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+          <path d="M15 11v6" />
+          <path d="M12 14h6" />
+        </svg>
+      </button>
+      <button
+        class="tool-btn"
         class:on={snapshotsOpen}
+        type="button"
+        aria-label="快照记录"
+        aria-pressed={snapshotsOpen}
         title="快照记录：查看/恢复不同版本"
         disabled={!editor}
         onclick={onToggleSnapshots}
-      >⧗ 快照</button>
+      >
+        <svg
+          viewBox="0 0 24 24"
+          width="15"
+          height="15"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+          <path d="M3 3v5h5" />
+          <path d="M12 7v5l4 2" />
+        </svg>
+      </button>
       <div class="export-wrap">
-        <button class="action-btn" title="导出（仅正文）" disabled={!editor} onclick={() => (exportOpen = !exportOpen)}>⭳ 导出</button>
+        <button
+          class="tool-btn"
+          type="button"
+          aria-label="导出"
+          aria-haspopup="menu"
+          aria-expanded={exportOpen}
+          title="导出（仅正文）"
+          disabled={!editor}
+          onclick={() => (exportOpen = !exportOpen)}
+        >
+          <svg
+            viewBox="0 0 24 24"
+            width="15"
+            height="15"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+            <path d="m7 10 5 5 5-5" />
+            <path d="M12 15V3" />
+          </svg>
+        </button>
         {#if exportOpen}
           <div class="export-mask" onclick={() => (exportOpen = false)}></div>
           <div class="export-menu">
@@ -171,22 +283,25 @@
     border-bottom: 1px solid var(--border);
     user-select: none;
   }
-  /* 工具栏固定占满编辑区宽度，不随正文宽度模式变化；左侧内缩仍与正文对齐 */
+  /* 工具栏固定占满编辑区宽度，不随正文宽度模式变化；左侧内缩仍与正文对齐。
+     允许折行：系统/界面整体放大时视口变窄，宁可折成两行也不能把右侧按钮挤出可视区。 */
   .toolbar-inner {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 16px;
-    padding: 6px var(--editor-inset, 16px);
+    gap: 6px 12px;
+    padding: 5px var(--editor-inset, 16px);
     box-sizing: border-box;
   }
   .group {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
   }
   .label {
     font-size: 12px;
     color: var(--text-dim);
+    white-space: nowrap;
   }
   input {
     font: inherit;
@@ -235,26 +350,34 @@
   .actions {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 6px;
     margin-left: auto;
   }
-  .action-btn {
+  /* 图标按钮：固定 26×26 且不参与收缩，缩放时等比放大，点击区不会变小 */
+  .tool-btn {
     font: inherit;
-    font-size: 13px;
-    padding: 3px 10px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 26px;
+    height: 26px;
+    padding: 0;
     border: 1px solid var(--border);
-    border-radius: 4px;
+    border-radius: 5px;
     background: var(--bg);
     color: var(--text);
     cursor: pointer;
-    white-space: nowrap;
   }
-  .action-btn:hover:not(:disabled),
-  .action-btn.on {
+  .tool-btn svg {
+    display: block;
+  }
+  .tool-btn:hover:not(:disabled),
+  .tool-btn.on {
     border-color: var(--accent);
     color: var(--accent);
   }
-  .action-btn:disabled {
+  .tool-btn:disabled {
     opacity: 0.45;
     cursor: default;
   }
