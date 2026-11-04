@@ -1,12 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import type {
-  AppSettings,
-  BoxInfo,
-  NoteMeta,
-  PomodoroDayStats,
-  PomodoroSettings,
-  SnapshotMeta,
-} from './types';
+import type { AppSettings, BoxInfo, NoteMeta, SnapshotMeta } from './types';
 
 export function errMsg(e: unknown): string {
   if (typeof e === 'string') return e;
@@ -16,7 +9,11 @@ export function errMsg(e: unknown): string {
 
 export const api = {
   openBox: (path: string) => invoke<BoxInfo>('open_box', { path }),
-  createBox: (path: string, name: string) => invoke<BoxInfo>('create_box', { path, name }),
+  /** 新建花匣：名字由后端从文件名派生，前端不再传 name */
+  createBox: (path: string) => invoke<BoxInfo>('create_box', { path }),
+  /** 重命名花匣：真改磁盘 .hxl 文件名，返回更新后的 info（id 不变） */
+  renameBox: (boxId: string, newName: string) =>
+    invoke<BoxInfo>('rename_box', { boxId, newName }),
   closeBox: (boxId: string) => invoke<void>('close_box', { boxId }),
   listNotes: (boxId: string) => invoke<NoteMeta[]>('list_notes', { boxId }),
   readNote: (boxId: string, noteId: string) => invoke<string>('read_note', { boxId, noteId }),
@@ -51,19 +48,8 @@ export const api = {
   getStartupHx: () => invoke<string | null>('get_startup_hx'),
   /** 一次性启动提示（数据迁移成功/失败）；后端读取后即清空 */
   getStartupNotice: () => invoke<string | null>('get_startup_notice'),
-  revealInFolder: (path: string) =>
-    invoke<void>('reveal_in_folder', { path }).catch(() => {}),
-  /** 花钟数据文件（花钟.hz）的绝对路径，供「打开数据位置」使用 */
-  huazhongPath: () => invoke<string>('huazhong_path'),
-  getPomodoroSettings: () => invoke<PomodoroSettings>('get_pomodoro_settings'),
-  setPomodoroSettings: (mode: string, focusMinutes: number, breakMinutes: number, loops: number) =>
-    invoke<void>('set_pomodoro_settings', { mode, focusMinutes, breakMinutes, loops }),
-  recordPomodoro: (seconds: number, mode: string) =>
-    invoke<void>('record_pomodoro', { seconds, mode }),
-  getPomodoroStats: (year: number, month: number) =>
-    invoke<PomodoroDayStats[]>('get_pomodoro_stats', { year, month }),
-  deletePomodoroSession: (date: string, id: string) =>
-    invoke<void>('delete_pomodoro_session', { date, id }),
-  shortenPomodoroSession: (date: string, id: string, seconds: number) =>
-    invoke<void>('shorten_pomodoro_session', { date, id, seconds }),
+  /** 某个花匣打不开：从「下次自动打开」列表里移除，避免每次启动重复报错 */
+  dropBoxPath: (path: string) => invoke<void>('drop_box_path', { path }),
+  /** 关窗前最后一次保存已完成，同意 Rust 侧销毁窗口 */
+  flushAck: () => invoke<void>('flush_ack'),
 };

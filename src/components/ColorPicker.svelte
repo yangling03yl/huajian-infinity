@@ -8,6 +8,8 @@
   let { onPick, onClose }: Props = $props();
 </script>
 
+<svelte:window onkeydown={(e) => e.key === 'Escape' && onClose()} />
+
 <div class="picker" role="menu">
   <div class="grid">
     {#each PALETTE as c}

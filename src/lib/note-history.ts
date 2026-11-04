@@ -65,6 +65,19 @@ export function recordModification(key: string, md: string): void {
   h.index = h.entries.length - 1;
 }
 
+/**
+ * 用 md 覆盖当前位置的记录（不增删记录、不移动指针）。
+ *
+ * 用于「程序性恢复后重排」：setMarkdown 之后重新序列化得到的文本与传入的 target
+ * 可能因归一化而不同，而磁盘上落下的是前者。若不同步更新，下次重开该花笺时
+ * `initHistory` 的比较会失败，整条历史被静默重建（退回/前进能力突然消失）。
+ */
+export function replaceCurrent(key: string, md: string): void {
+  const h = histories.get(key);
+  if (!h || h.index < 0 || h.index >= h.entries.length) return;
+  h.entries[h.index] = md;
+}
+
 /** 退回：回到上一次修改之后、当前修改之前的内容；无可退回时返回 null */
 export function historyBack(key: string): string | null {
   const h = histories.get(key);

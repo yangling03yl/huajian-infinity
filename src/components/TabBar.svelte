@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { tabs, activeTab, openNote, closeTab, patchNote, boxById, refreshNotes } from '../lib/stores';
+  import { get } from 'svelte/store';
+  import { tabs, activeTab, openNote, closeTab, patchNote, boxes, refreshNotes } from '../lib/stores';
   import { api, errMsg } from '../lib/api';
   import { nextColor } from '../lib/colors';
-  import type { Tab } from '../lib/types';
+  import type { NoteMeta } from '../lib/types';
   import ColorPicker from './ColorPicker.svelte';
 
   interface Props {
@@ -16,11 +17,37 @@
   let colorFor = $state<{ boxId: string; noteId: string } | null>(null);
   let titleInput: HTMLInputElement | undefined = $state();
 
+  /**
+   * 花笺元信息的响应式索引。
+   *
+   * 不能再用 `boxById()`（内部是 `get(boxes)`）：`get()` 不参与 Svelte 的依赖收集，
+   * 于是改名/改色后标签栏不会重渲染，用户会看到侧栏已更新、标签还是旧标题。
+   * 这里显式读 `$boxes`，任何一次 patchNote 都能驱动更新。
+   */
+  const noteMap = $derived(
+    new Map<string, NoteMeta>(
+      $boxes.flatMap((b) => b.notes.map((n) => [`${b.info.id}/${n.id}`, n] as const)),
+    ),
+  );
+
+  function noteOf(boxId: string, noteId: string): NoteMeta | undefined {
+    return noteMap.get(`${boxId}/${noteId}`);
+  }
+
+  /**
+   * 取标题但**不建立响应式依赖**：改名输入框正在编辑时，如果 boxes 因刷新而变化
+   * 重新触发这个 effect，就会把用户正在输入的内容重置掉。
+   */
+  function snapshotTitle(boxId: string, noteId: string): string {
+    return (
+      get(boxes).find((b) => b.info.id === boxId)?.notes.find((n) => n.id === noteId)?.title ?? ''
+    );
+  }
+
   $effect(() => {
     if (renameTarget) {
       editing = { ...renameTarget };
-      const box = boxById(renameTarget.boxId);
-      editText = box?.notes.find((n) => n.id === renameTarget.noteId)?.title ?? '';
+      editText = snapshotTitle(renameTarget.boxId, renameTarget.noteId);
     }
   });
 
@@ -35,6 +62,7 @@
     if (!target) return;
     const title = editText.trim();
     if (!title) return;
+    if (title === noteOf(target.boxId, target.noteId)?.title) return;
     try {
       await api.renameNote(target.boxId, target.noteId, title);
       patchNote(target.boxId, target.noteId, { title });
@@ -56,7 +84,7 @@
   async function newNote(): Promise<void> {
     const tab = $activeTab;
     if (!tab) return;
-    const box = boxById(tab.boxId);
+    const box = $boxes.find((b) => b.info.id === tab.boxId);
     if (!box) return;
     const color = nextColor(box.notes.map((n) => n.color));
     try {
@@ -71,7 +99,7 @@
     }
   }
 
-  function closeCurrentTab(t: Tab): void {
+  function closeCurrentTab(t: { boxId: string; noteId: string }): void {
     if (editing && editing.boxId === t.boxId && editing.noteId === t.noteId) {
       editing = null;
       onRenameDone();
@@ -84,6 +112,11 @@
     colorFor = null;
     if (target) void changeColor(target.boxId, target.noteId, c);
   }
+
+  function openColorPicker(boxId: string, noteId: string): void {
+    if (!noteOf(boxId, noteId)) return;
+    colorFor = { boxId, noteId };
+  }
 </script>
 
 <div class="tabbar">
@@ -91,13 +124,25 @@
     {#each $tabs as t (t.boxId + t.noteId)}
       {@const isActive = $activeTab?.boxId === t.boxId && $activeTab?.noteId === t.noteId}
       {@const isEditing = editing?.boxId === t.boxId && editing?.noteId === t.noteId}
+      {@const note = noteOf(t.boxId, t.noteId)}
       <div
         class="tab {isActive ? 'active' : ''}"
         role="button"
         tabindex="-1"
         onclick={() => openNote(t.boxId, t.noteId)}
       >
-        <span class="tabs-dot" style="background:{boxById(t.boxId)?.notes.find(n => n.id === t.noteId)?.color || '#888'}"></span>
+        <button
+          class="dot-btn"
+          type="button"
+          title="修改花笺颜色"
+          aria-label="修改花笺颜色"
+          onclick={(e) => {
+            e.stopPropagation();
+            openColorPicker(t.boxId, t.noteId);
+          }}
+        >
+          <span class="tabs-dot" style="background:{note?.color || '#888'}"></span>
+        </button>
         {#if isEditing}
           <input
             bind:this={titleInput}
@@ -117,11 +162,10 @@
             class="tab-title"
             ondblclick={() => {
               editing = { boxId: t.boxId, noteId: t.noteId };
-              editText = boxById(t.boxId)?.notes.find((n) => n.id === t.noteId)?.title ?? '';
+              editText = note?.title ?? '';
             }}
-          >{boxById(t.boxId)?.notes.find((n) => n.id === t.noteId)?.title || '未命名花笺'}</span>
+          >{note?.title || '未命名花笺'}</span>
         {/if}
-        {#if t.dirty}<span class="dirty" title="未保存">●</span>{/if}
         <button
           class="icon-btn tab-close"
           title="关闭"
@@ -133,11 +177,16 @@
       </div>
     {/each}
     {#if $activeTab}
-      <button class="icon-btn new-tab" title="新建花笺" onclick={newNote}>＋</button>
+      <button
+        class="icon-btn new-tab"
+        title="新建花笺"
+        onclick={() => void newNote()}
+      >＋</button>
     {/if}
   </div>
 
   {#if colorFor}
+    <div class="color-mask" role="presentation" onclick={() => (colorFor = null)}></div>
     <ColorPicker onPick={pickColor} onClose={() => (colorFor = null)} />
   {/if}
 </div>
@@ -167,7 +216,7 @@
     display: flex;
     align-items: center;
     gap: 7px;
-    padding: 0 6px 0 12px;
+    padding: 0 6px 0 8px;
     border-right: 1px solid var(--border);
     color: var(--text-dim);
     cursor: pointer;
@@ -184,12 +233,29 @@
     color: var(--text);
     box-shadow: inset 0 2px 0 var(--accent);
   }
+  /* 圆点是「改颜色」的入口：单独包一层按钮，点击不会触发切换标签 */
+  .dot-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    cursor: pointer;
+    border-radius: 50%;
+  }
+  .dot-btn:hover .tabs-dot {
+    transform: scale(1.25);
+  }
   .tabs-dot {
     width: 9px;
     height: 9px;
     border-radius: 50%;
-    flex: none;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+    transition: transform 0.1s;
   }
   .tab-title {
     overflow: hidden;
@@ -205,10 +271,6 @@
     font-size: 13px;
     width: 140px;
   }
-  .dirty {
-    color: var(--accent);
-    font-size: 9px;
-  }
   .tab-close {
     width: 20px;
     height: 20px;
@@ -217,5 +279,10 @@
   .new-tab {
     margin: 5px 8px;
     align-self: center;
+  }
+  .color-mask {
+    position: fixed;
+    inset: 0;
+    z-index: 49;
   }
 </style>

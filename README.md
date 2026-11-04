@@ -1,18 +1,16 @@
 # 花笺 infinity
 
 所见即所得 Markdown 笔记，笔记以「花匣」为容器打包成单文件 `.hxl`（tar 套 json，可整体拷贝到其它设备）。
-内置番茄钟（花钟）功能，番茄钟数据与笔记数据分开存放，可与独立的「花钟」应用共用同一份数据。
 
-- 版本：`0.9.1-beta`
+- 版本：`1.0.0-rc1`
 - 许可：MulanPSL-2.0（见 `LICENSE`）
 
 ## 功能
 
 - 花匣（`.hxl`）单文件笔记包：花笺增删改、排序、颜色、修改历史与快照回退
+- 花匣名即文件名（`.hxl` 的无后缀文件名），侧栏可重命名（双击花匣名或点 ✎，会真改磁盘文件名）
 - Markdown 所见即所得编辑（Milkdown）、导出 Markdown / PDF
 - 八套主题、明暗两版、正文宽度两档、侧栏宽度可调
-- 番茄钟：标准倒计时 / 正向正计时、休息循环、按日统计与日历热力
-- 番茄钟记录管理：可删除任意记录、可缩短已完成番茄的时长（**只能减短**，不提供手工新增）
 
 ## 用户数据位置
 
@@ -22,17 +20,23 @@
 Linux   ~/.config/huajian/
 Windows %APPDATA%\huajian
 macOS   ~/Library/Application Support/huajian
-├── 花笺/
-│   └── settings.json      # 主题、明暗、侧栏宽度、正文宽度、上次打开的花匣列表
-└── 花钟.hz                # 番茄钟全部数据：无压缩 tar 套一个 huazhong.json
+└── 花笺/
+    └── settings.json      # 主题、明暗、侧栏宽度、正文宽度、上次打开的花匣列表
 ```
 
-- 应用内「番茄记录」面板底部有「打开数据位置」按钮。
-- 备份 / 跨设备搬移只需拷 `花钟.hz` 一个文件；格式自包含（只存本地墙上时刻，不含时区/时间戳/绝对路径）。
-- 手工查看：`tar -xOf 花钟.hz huazhong.json | python3 -m json.tool`
-- 从旧版本（`~/.config/com.huajian.app/`）升级时，首次启动会自动导入旧设置与统计，
+- 从旧版本（`~/.config/com.huajian.app/`）升级时，首次启动会自动导入旧设置，
   并把旧文件改名为 `*.migrated-YYYYMMDD` 留作备份。
-- 数据格式契约见 [`docs/huazhong-format.md`](docs/huazhong-format.md)。
+
+## 数据安全说明
+
+- 花匣保存采用「写临时文件 → `fsync` → 原子改名」，临时文件形如
+  `.hxl-tmp-<uuid>.tmp`（保存结束后自动清理）。
+- 每次会话**第一次**真正写入某个花匣时，会把原文件复制一份 `<花匣名>.hxl.bak`，
+  用于整包损坏时的回落；确认无误后可自行删除。
+- `.hxl` 内部的正文/快照使用 HTML 注释分帧，用户内容里出现同类文本时会做行首转义，
+  保存与读取严格可逆；旧版本生成的花匣可直接打开。
+- 快照预览与 PDF 导出会禁用 Markdown 里的原始 HTML 并过滤危险链接协议，
+  因此打开他人分享的花匣不会执行其中的脚本。
 
 ## 构建
 
@@ -75,15 +79,12 @@ cargo test --manifest-path src-tauri/Cargo.toml   # 运行 Rust 单元测试
 ## 目录结构
 
 ```
-src/                     Svelte 5 前端（组件、编辑器、主题、番茄钟面板）
-src/lib/pomodoro-core.ts 番茄钟状态机（纯逻辑，可被独立「花钟」应用复用）
+src/                     Svelte 5 前端（组件、编辑器、主题）
 src-tauri/src/           Rust 后端
   box_store.rs           花匣 .hxl 打包/解包
   note_doc.rs            笔记正文与快照的序列化
-  huazhong.rs            花钟数据层（tar 读写、区间并集、互斥锁、增删改）
   paths.rs               用户数据目录布局 + 旧数据一次性迁移
   settings.rs            应用设置
   commands.rs            Tauri 命令
-docs/huazhong-format.md  花钟数据格式契约（与独立「花钟」应用共用）
 scripts/                 构建与自测脚本
 ```

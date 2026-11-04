@@ -1,6 +1,6 @@
 [package]
 name = "huajian"
-version = "0.9.1-beta"
+version = "1.0.0-rc1"
 description = "花笺 — 所见即所得 Markdown 笔记（花匣 .hxl 打包）"
 authors = ["huajian"]
 edition = "2021"
@@ -15,7 +15,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
-tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

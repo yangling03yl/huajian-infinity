@@ -1,17 +1,18 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
-  import { get } from 'svelte/store';
-  import { activeTab } from '../lib/stores';
   import { api, errMsg } from '../lib/api';
   import type { SnapshotMeta } from '../lib/types';
 
   interface Props {
-    onCreateSnapshot: () => void;
+    /** 面板始终作用在「它正在显示的这篇花笺」上，由父组件把当前标签传进来 */
+    boxId: string;
+    noteId: string;
+    /** 复制快照（父组件负责 flush + 调后端），返回后本组件重新拉列表 */
+    onCreateSnapshot: () => Promise<void>;
     onCompare: (meta: SnapshotMeta) => void;
-    onRestored: (meta: SnapshotMeta) => void;
+    onRestored: (meta: SnapshotMeta) => Promise<void>;
     onClose: () => void;
   }
-  let { onCreateSnapshot, onCompare, onRestored, onClose }: Props = $props();
+  let { boxId, noteId, onCreateSnapshot, onCompare, onRestored, onClose }: Props = $props();
 
   let snapshots = $state<SnapshotMeta[]>([]);
   let loading = $state(true);
@@ -20,20 +21,41 @@
   let busy = $state(false);
 
   async function refresh(): Promise<void> {
-    const tab = get(activeTab);
-    if (!tab) {
+    if (!boxId || !noteId) {
       snapshots = [];
       loading = false;
       return;
     }
     loading = true;
     try {
-      snapshots = (await api.listSnapshots(tab.boxId, tab.noteId)).reverse();
+      snapshots = (await api.listSnapshots(boxId, noteId)).reverse();
     } catch (e) {
       snapshots = [];
       alert(errMsg(e));
     } finally {
       loading = false;
+    }
+  }
+
+  // 显式读取 boxId/noteId 建立依赖：切换花笺时重新拉取，
+  // 否则面板里显示的还是上一篇的快照，操作会打到错误的 id 上
+  $effect(() => {
+    if (!boxId || !noteId) {
+      snapshots = [];
+      loading = false;
+      return;
+    }
+    void refresh();
+  });
+
+  async function create(): Promise<void> {
+    busy = true;
+    try {
+      await onCreateSnapshot();
+      // 新建后必须重拉列表，否则用户以为没创建成功、会重复点击
+      await refresh();
+    } finally {
+      busy = false;
     }
   }
 
@@ -50,11 +72,9 @@
 
   async function remove(meta: SnapshotMeta): Promise<void> {
     confirmDelete = null;
-    const tab = get(activeTab);
-    if (!tab) return;
     busy = true;
     try {
-      await api.deleteSnapshot(tab.boxId, tab.noteId, meta.id);
+      await api.deleteSnapshot(boxId, noteId, meta.id);
       await refresh();
     } catch (e) {
       alert(errMsg(e));
@@ -69,10 +89,6 @@
     const pad = (n: number) => String(n).padStart(2, '0');
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
   }
-
-  onMount(() => {
-    void refresh();
-  });
 </script>
 
 <div class="snap-panel">
@@ -82,7 +98,12 @@
   </header>
 
   <div class="panel-actions">
-    <button class="btn primary" title="把当前正文保存为一个新快照" onclick={onCreateSnapshot}>⧉ 复制当前快照</button>
+    <button
+      class="btn primary"
+      title="把当前正文保存为一个新快照"
+      disabled={busy}
+      onclick={() => void create()}
+    >⧉ 复制当前快照</button>
   </div>
 
   <div class="list">

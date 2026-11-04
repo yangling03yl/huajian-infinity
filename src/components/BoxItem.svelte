@@ -1,10 +1,9 @@
 <script lang="ts">
   import type { BoxInfo, NoteMeta } from '../lib/types';
-  import { activeTab, noteById, openNote, removeBoxUI, removeNoteUI, refreshNotes, reorderNotesUI, toggleBox } from '../lib/stores';
+  import { activeTab, noteById, openNote, removeBoxUI, removeNoteUI, refreshNotes, reorderNotesUI, replaceBoxInfo, showHint, toggleBox } from '../lib/stores';
   import { api, errMsg } from '../lib/api';
   import { nextColor } from '../lib/colors';
-  import { claimDrag, clickSuppressed, makeGhost, positionGhost, releaseDrag, removeGhost } from '../lib/dnd';
-  import VirtualList from './VirtualList.svelte';
+  import { claimDrag, clickSuppressed, makeGhost, nudgeScrollContainer, positionGhost, releaseDrag, removeGhost } from '../lib/dnd';
 
   interface Props {
     box: BoxInfo;
@@ -22,7 +21,6 @@
   let dragNoteId = $state<string | null>(null);
   let dropTarget = $state<{ id: string; pos: 'above' | 'below' } | null>(null);
 
-  let vl: VirtualList | undefined = $state();
   let notesEl: HTMLDivElement | undefined = $state();
   let pending: { note: NoteMeta; startX: number; startY: number } | null = null;
   let ghost: HTMLElement | null = null;
@@ -69,6 +67,40 @@
     }
   }
 
+  // ---- 花匣重命名：名字就是磁盘文件名，改名会真改文件 ----
+
+  let editingName = $state(false);
+  let nameText = $state('');
+  let nameInput: HTMLInputElement | undefined = $state();
+
+  function startRenameBox(): void {
+    if (editingName) return;
+    nameText = box.name;
+    editingName = true;
+  }
+
+  $effect(() => {
+    if (editingName) {
+      nameInput?.focus();
+      nameInput?.select();
+    }
+  });
+
+  async function commitBoxName(): Promise<void> {
+    if (!editingName) return;
+    editingName = false;
+    const next = nameText.trim();
+    if (!next || next === box.name) return; // 空名/未改动：静默放弃
+    try {
+      const info = await api.renameBox(box.id, next);
+      replaceBoxInfo(info);
+      showHint(`花匣已重命名为「${info.name}」`);
+    } catch (e) {
+      // 非法名/重名/文件被占用的中文文案都由后端给出
+      alert(errMsg(e));
+    }
+  }
+
   // ---- 侧边栏花笺拖拽排序（指针事件自实现，仅限同一花匣内；Windows WebView2
   // 在 dragDropEnabled 下禁用 HTML5 DnD，故不能用 draggable 原生拖拽） ----
 
@@ -82,9 +114,17 @@
   }
 
   function onWindowPointerMove(e: PointerEvent): void {
-    if (ghost) {
-      positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
-      vl?.nudgeScroll(e.clientY);
+    // 指针已无按键（pointerup 丢在窗口外）：丢弃挂起的会话，
+    // 否则指针移回窗口时会"凭空"起拖
+    if (pending && e.buttons === 0) {
+      pending = null;
+      return;
+    }
+    // 以 dragNoteId 判定会话是否已开启：取不到行时没有 ghost，但仍要继续跟踪落点
+    if (ghost || dragNoteId !== null) {
+      if (ghost) positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
+      // 真正可滚动的是侧栏的 .box-list，不是高度被内容撑开的 .notes
+      nudgeScrollContainer(notesEl?.closest('.box-list') as HTMLElement | null, e.clientY);
       updateDropTarget(e.clientX, e.clientY);
       return;
     }
@@ -132,22 +172,25 @@
     dragNoteId = null;
     dropTarget = null;
     pending = null;
-    releaseDrag(dragOwner);
+    // 取消型结束（Esc / pointercancel）不设置 click 抑制，避免吞掉紧随其后的正常点击
+    releaseDrag(dragOwner, commit);
     if (!commit || !src || !target) return;
     commitOrder(moveNote(notes, src, target.id, target.pos));
   }
 
   function onWindowPointerUp(): void {
-    if (ghost) endDrag(true);
+    // 只要会话已开启就必须走 endDrag → releaseDrag，否则 dragOwner 永久占用、
+    // 整个应用的拖拽会失效到重启
+    if (ghost || dragNoteId !== null) endDrag(true);
     else pending = null;
   }
 
   function onWindowPointerCancel(): void {
-    if (ghost || pending) endDrag(false);
+    if (ghost || pending || dragNoteId !== null) endDrag(false);
   }
 
   function onWindowKeyDown(e: KeyboardEvent): void {
-    if (e.key === 'Escape' && (ghost || pending)) endDrag(false);
+    if (e.key === 'Escape' && (ghost || pending || dragNoteId !== null)) endDrag(false);
   }
 
   $effect(() => {
@@ -192,11 +235,37 @@
 </script>
 
 <div class="box">
-  <div class="box-head" role="button" tabindex="-1" onclick={() => { if (!clickSuppressed()) toggleBox(box.id); }}>
+  <div
+    class="box-head"
+    role="button"
+    tabindex="-1"
+    onclick={() => { if (!clickSuppressed()) toggleBox(box.id); }}
+    ondblclick={(e) => {
+      // 只认双击花匣名：双击箭头/计数等区域仍按折叠处理
+      if ((e.target as HTMLElement).closest('.box-name')) startRenameBox();
+    }}
+  >
     <span class="caret {expanded ? 'open' : ''}">▸</span>
-    <span class="box-name">{box.name}</span>
+    {#if editingName}
+      <input
+        bind:this={nameInput}
+        bind:value={nameText}
+        class="box-name-input"
+        title="回车确认，Esc 取消"
+        onclick={(e) => e.stopPropagation()}
+        ondblclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => {
+          if (e.key === 'Enter') void commitBoxName();
+          if (e.key === 'Escape') editingName = false;
+        }}
+        onblur={() => void commitBoxName()}
+      />
+    {:else}
+      <span class="box-name" title={box.path}>{box.name}</span>
+    {/if}
     <span class="count">{notes.length}</span>
     <span class="actions" onclick={(e) => e.stopPropagation()}>
+      <button class="icon-btn" title="重命名花匣（改文件名）" onclick={startRenameBox}>✎</button>
       <button class="icon-btn" title="新建花笺" onclick={createNote}>＋</button>
       <button class="icon-btn" title="强制保存花匣" onclick={forceSave}>⤓</button>
       <button class="icon-btn" title="关闭花匣" onclick={close} disabled={busy}>×</button>
@@ -208,9 +277,7 @@
       {#if notes.length === 0}
         <div class="empty">空花匣，点 ＋ 新建花笺</div>
       {:else}
-        <VirtualList count={notes.length} bind:this={vl}>
-          {#snippet children(idx)}
-            {@const note = notes[idx]}
+        {#each notes as note (note.id)}
             {@const key = `${box.id}/${note.id}`}
             <div
               class="note-row {activeKey === key ? 'active' : ''}"
@@ -240,8 +307,7 @@
                 >🗑</button>
               </span>
             </div>
-          {/snippet}
-        </VirtualList>
+        {/each}
       {/if}
     </div>
   {/if}
@@ -295,6 +361,19 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* 花匣名原地编辑（交互与标签栏的花笺改名一致） */
+  .box-name-input {
+    flex: 1;
+    min-width: 0;
+    padding: 2px 6px;
+    border: 1px solid var(--accent);
+    border-radius: 5px;
+    background: var(--bg);
+    color: var(--text);
+    outline: none;
+    font: inherit;
+    font-weight: 600;
   }
   .count {
     color: var(--text-dim);

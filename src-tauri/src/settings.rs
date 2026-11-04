@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-/// 花笺自己的用户设置（**不含番茄钟**，番茄钟设置住在 花钟.hz）。
+/// 花笺自己的用户设置。
 ///
 /// 存放位置由调用方传入（见 `crate::paths::note_settings_path`）；
 /// 正常是 `<config_dir>/huajian/花笺/settings.json`。
@@ -85,20 +85,43 @@ impl AppSettings {
     }
 
     /// 取当前宽度模式（字段缺失时按默认）
+    #[allow(dead_code)] // 仅测试与调试使用；生产代码直接读字段
     pub fn width_mode(&self) -> &str {
         self.width_mode.as_deref().unwrap_or(WIDTH_MODE_LEFT75)
     }
 }
 
-/// 读取设置文件；缺失/损坏返回默认值。`path` 是 settings.json 的完整路径。
+/// 读取设置文件；缺失返回默认值，**损坏时先备份再回落默认值**。
+///
+/// 不能只是静默回落：下一次 `save` 会把默认值写回去，用户原配置就此永久消失。
 pub fn load(path: &Path) -> AppSettings {
-    match fs::read(path)
-        .ok()
-        .and_then(|bytes| serde_json::from_slice::<AppSettings>(&bytes).ok())
-    {
-        Some(s) => s.sanitized(),
-        None => AppSettings::default(),
+    let Ok(bytes) = fs::read(path) else {
+        return AppSettings::default();
+    };
+    match serde_json::from_slice::<AppSettings>(&bytes) {
+        Ok(s) => s.sanitized(),
+        Err(_) => {
+            let _ = backup_broken(path);
+            AppSettings::default()
+        }
     }
+}
+
+/// 把损坏的设置文件改名归档为 `settings.json.broken-YYYYMMDD`，重名再追加 `-2`、`-3`…
+fn backup_broken(path: &Path) -> Option<PathBuf> {
+    let name = path.file_name()?.to_string_lossy().to_string();
+    let stamp = chrono::Local::now().format("%Y%m%d").to_string();
+    for i in 1..=100u32 {
+        let candidate = path.with_file_name(if i == 1 {
+            format!("{name}.broken-{stamp}")
+        } else {
+            format!("{name}.broken-{stamp}-{i}")
+        });
+        if !candidate.exists() {
+            return fs::rename(path, &candidate).ok().map(|()| candidate);
+        }
+    }
+    None
 }
 
 /// 原子保存设置文件（先写 `<path>.tmp` 再 rename），自动创建父目录。
@@ -120,6 +143,19 @@ fn tmp_path(path: &Path) -> PathBuf {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
     path.with_file_name(format!("{name}.tmp"))
+}
+
+/// 把有序路径列表里的 `old` **原位替换**为 `new`（保持顺序），并顺手去重。
+///
+/// 花匣改名后必须用它：`open_box` 的 push 会让顺序错乱，`close_box` 的 retain 会直接丢条目。
+pub fn replace_box_path(list: &mut Vec<String>, old: &str, new: &str) {
+    for p in list.iter_mut() {
+        if p == old {
+            *p = new.to_string();
+        }
+    }
+    let mut seen = std::collections::HashSet::new();
+    list.retain(|p| seen.insert(p.clone()));
 }
 
 #[cfg(test)]
@@ -168,9 +204,9 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 
-    /// 旧版 settings.json（含 pomodoro 字段）必须能读，多余字段直接忽略
+    /// 旧版 settings.json 里的未知字段必须能读，多余字段直接忽略
     #[test]
-    fn legacy_settings_without_pomodoro_field() {
+    fn legacy_settings_with_unknown_field() {
         let dir = std::env::temp_dir().join("huajian_settings_legacy_test");
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(paths::note_dir(&dir)).unwrap();
@@ -178,7 +214,7 @@ mod tests {
         fs::write(
             settings_path(&dir),
             br#"{"theme":"bamboo","dark":true,"sidebar_width":360,"boxes":["/x.hxl"],
-                 "pomodoro":{"mode":"forward","focus_minutes":50}}"#,
+                 "unknown_field":{"mode":"forward","focus_minutes":50}}"#,
         )
         .unwrap();
 
@@ -188,10 +224,10 @@ mod tests {
         assert_eq!(s.sidebar_width, 360);
         assert_eq!(s.boxes, vec!["/x.hxl"]);
 
-        // 保存后不再写出 pomodoro
+        // 保存后不再写出未知字段
         save(&settings_path(&dir), &s).unwrap();
         let raw = fs::read_to_string(settings_path(&dir)).unwrap();
-        assert!(!raw.contains("pomodoro"), "{raw}");
+        assert!(!raw.contains("unknown_field"), "{raw}");
 
         let _ = fs::remove_dir_all(&dir);
     }
@@ -274,5 +310,31 @@ mod tests {
         assert!(paths::note_settings_path(&dir).exists());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 花匣改名：旧路径原位替换为新路径，顺序不变，重复项被去掉
+    #[test]
+    fn replace_box_path_keeps_order_and_dedupes() {
+        let mut list = vec![
+            "/a.hxl".to_string(),
+            "/b.hxl".to_string(),
+            "/c.hxl".to_string(),
+        ];
+        replace_box_path(&mut list, "/b.hxl", "/B.hxl");
+        assert_eq!(list, vec!["/a.hxl", "/B.hxl", "/c.hxl"]);
+
+        // 替换后与已有条目重名 → 只保留第一个，顺序仍不乱
+        let mut dup = vec![
+            "/a.hxl".to_string(),
+            "/b.hxl".to_string(),
+            "/c.hxl".to_string(),
+        ];
+        replace_box_path(&mut dup, "/c.hxl", "/a.hxl");
+        assert_eq!(dup, vec!["/a.hxl", "/b.hxl"]);
+
+        // 旧路径不在列表里：只去重，不改内容顺序
+        let mut missing = vec!["/a.hxl".to_string(), "/a.hxl".to_string(), "/b.hxl".to_string()];
+        replace_box_path(&mut missing, "/nope.hxl", "/new.hxl");
+        assert_eq!(missing, vec!["/a.hxl", "/b.hxl"]);
     }
 }

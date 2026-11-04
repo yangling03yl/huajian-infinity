@@ -43,7 +43,18 @@ cargo build --release --target loongarch64-unknown-linux-gnu --features tauri/cu
 BIN="target/loongarch64-unknown-linux-gnu/release/huajian"
 
 # ---- 防陈旧校验 1：内嵌版本串 ----
-EMBEDDED="$(strings -a "$BIN" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+-beta' | sort -u | tail -1 || true)"
+# 版本可能带任意预发布后缀（-beta / -rc1 / ...），从 VERSION 里推导匹配模式，
+# 避免把后缀写死成 -beta 而在换发版命名时误报陈旧产物。
+case "$VERSION" in
+  *-*)
+    PRE="${VERSION##*-}"
+    VERSION_RE="[0-9]+\.[0-9]+\.[0-9]+-${PRE}"
+    ;;
+  *)
+    VERSION_RE="[0-9]+\.[0-9]+\.[0-9]+"
+    ;;
+esac
+EMBEDDED="$(strings -a "$BIN" | grep -oE "$VERSION_RE" | sort -u | tail -1 || true)"
 if [ "$EMBEDDED" != "$VERSION" ]; then
   echo "错误: 二进制内嵌版本($EMBEDDED) != 期望($VERSION)，存在陈旧产物，中止" >&2
   exit 1

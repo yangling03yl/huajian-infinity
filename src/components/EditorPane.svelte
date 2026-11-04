@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { get } from 'svelte/store';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-  import { activeTab, tabs, setTabDirty, saveState, boxById, showHint, wordCount } from '../lib/stores';
+  import { activeTab, saveState, boxById, showHint, wordCount } from '../lib/stores';
   import {
     initHistory,
     recordModification,
+    replaceCurrent,
     historyBack,
     historyForward,
     publishHistoryState,
@@ -14,6 +16,7 @@
   import { api, errMsg } from '../lib/api';
   import { createEditor, type EditorInstance } from '../lib/editor';
   import { buildPdf, bytesToBase64, strToBase64, safeFileName } from '../lib/export';
+  import { registerFlush } from '../lib/session';
   import type { SnapshotMeta } from '../lib/types';
   import Toolbar from './Toolbar.svelte';
   import DiffPane from './DiffPane.svelte';
@@ -37,26 +40,47 @@
   /** 编辑器当前内容（节流更新），用于实时差异 */
   let liveMd = $state('');
   let liveTimer: ReturnType<typeof setTimeout> | null = null;
+  let historyMoving = $state(false);
+  /**
+   * 标签切换序列号。
+   *
+   * `handleTabChange` 是一条有 4 个 await 点的长异步链（flush → destroy → readNote →
+   * createEditor），而 activeTab 的订阅不等待它。快速连点两个标签时，两次调用会交错，
+   * 出现「activeKey 指向 B、editor 却是 C 的实例」——之后任意一次 flush 都会把 C 的
+   * 正文写进 B。每个 await 之后用序列号判定自己是否已过期，过期就直接退出。
+   */
+  let tabSeq = 0;
 
-  /** 把当前编辑器内容写回后端；以 activeKey 定位，不依赖 activeTab 是否已切换 */
-  async function flush(): Promise<void> {
-    if (!editor || !activeKey) return;
-    const [boxId, noteId] = activeKey.split('/');
-    const md = editor.getMarkdown();
-    if (md === savedMdRef) return;
-    // 保存点即修改点：把本次内容记入该花笺的修改历史（供退回/前进，用户不可见）
-    recordModification(activeKey, md);
-    publishHistoryState(activeKey);
+  /** 只负责写盘与基线更新，返回是否写成功 */
+  async function write(key: string, md: string): Promise<boolean> {
+    const [boxId, noteId] = key.split('/');
+    if (!boxId || !noteId) return false;
     saveState.set('saving');
     try {
       await api.writeNote(boxId, noteId, md);
-      savedMdRef = md;
-      const t = get(tabs).find((x) => x.boxId === boxId && x.noteId === noteId);
-      if (t) setTabDirty(t, false, md);
+      if (activeKey === key) savedMdRef = md;
       saveState.set('saved');
+      return true;
     } catch (e) {
       saveState.set('error');
+      showHint(`保存失败：${errMsg(e)}`);
+      return false;
     }
+  }
+
+  /** 保存一次内容并计入修改历史（内容与已保存的一致时什么都不做） */
+  async function saveContent(key: string, md: string): Promise<void> {
+    if (md === savedMdRef) return;
+    if (!(await write(key, md))) return;
+    // 写盘成功后才记入历史：写失败却留下记录会造出"从没落过盘"的幽灵版本
+    recordModification(key, md);
+    if (activeKey === key) publishHistoryState(key);
+  }
+
+  /** 把编辑器当前内容写回后端；上下文由参数显式给出，不读全局 */
+  async function flush(key: string, ed: EditorInstance | null): Promise<void> {
+    if (!ed || !key) return;
+    await saveContent(key, ed.getMarkdown());
   }
 
   /** 编辑器内容即时回调（节流 200ms），驱动右侧实时差异 */
@@ -75,61 +99,72 @@
 
   async function handleTabChange(tab: { boxId: string; noteId: string } | null): Promise<void> {
     const key = tab ? `${tab.boxId}/${tab.noteId}` : '';
-    if (key === activeKey && key !== '') return;
-    // 切换一开始就清掉上一篇的字数与历史按钮状态，避免 flush 窗口内残留旧数据
+    if (key === activeKey) return;
+    const seq = ++tabSeq;
+
+    // 1) 先在旧上下文里落盘
+    const oldEditor = editor;
+    const oldKey = activeKey;
+    await flush(oldKey, oldEditor);
+    if (seq !== tabSeq) return;
+
+    // 2) 让旧上下文立即失效（顺序很重要：先清 activeKey，旧编辑器的去抖回调才会放弃）
+    editor = null;
+    activeKey = '';
     wordCount.set(null);
     publishHistoryState('');
-    await flush();
-    if (editor) {
-      const old = editor;
-      editor = null;
-      await old.destroy();
+    if (oldEditor) {
+      try {
+        await oldEditor.destroy();
+      } catch {
+        // 编辑器已销毁：忽略
+      }
     }
+    if (seq !== tabSeq) return;
+
     container?.replaceChildren();
     exitSplit();
     liveMd = '';
-    // 切换期间先清掉上一篇的字数与历史按钮状态，避免短暂显示上一篇的数据
-    wordCount.set(null);
-    publishHistoryState('');
-    if (!tab) {
-      activeKey = '';
-      return;
-    }
-    activeKey = key;
+    if (!tab) return;
+
+    // 3) 载入新花笺
     loading = true;
     try {
       const md = await api.readNote(tab.boxId, tab.noteId);
+      if (seq !== tabSeq) return;
       if (!container) return;
-      liveMd = md;
-      savedMdRef = md;
       const myKey = key;
-      editor = await createEditor(container, md, async (newMd) => {
-        const [boxId, noteId] = myKey.split('/');
-        // 程序性恢复（退回/前进/快照恢复）重排的去抖回调：内容与已持久化一致，跳过冗余写盘
-        if (activeKey === myKey && newMd === savedMdRef) return;
-        // 自动保存去抖触发 = 一次修改落定，记入历史（与当前位置内容相同会被忽略）
-        recordModification(myKey, newMd);
-        publishHistoryState(activeKey);
-        saveState.set('saving');
-        try {
-          await api.writeNote(boxId, noteId, newMd);
+      const ed = await createEditor(
+        container,
+        md,
+        async (newMd) => {
+          // 去抖触发的自动保存：写入目标由 myKey 固定，绝不使用会变化的全局 activeKey
           if (activeKey !== myKey) return;
-          savedMdRef = newMd;
-          const t = get(tabs).find((x) => x.boxId === boxId && x.noteId === noteId);
-          if (t) setTabDirty(t, false, newMd);
-          saveState.set('saved');
-        } catch (e) {
-          saveState.set('error');
-        }
-      }, onLive);
-      initHistory(myKey, md);
-      publishHistoryState(myKey);
+          await saveContent(myKey, newMd);
+        },
+        onLive,
+      );
+      // 创建期间又切走了：丢弃这个编辑器，绝不能挂到当前上下文上
+      if (seq !== tabSeq) {
+        await ed.destroy();
+        return;
+      }
+      editor = ed;
+      activeKey = key;
+      liveMd = md;
+      // 以「编辑器序列化后的结果」作为保存基线：磁盘原文与 Milkdown 的归一化输出
+      // 可能不同（列表序号、标题风格等），拿原文当基线会导致"切一次标签就改一次盘"
+      savedMdRef = ed.getMarkdown();
+      initHistory(key, savedMdRef);
+      publishHistoryState(key);
       saveState.set('saved');
     } catch (e) {
-      publishHistoryState('');
-      alert(`读取花笺失败: ${errMsg(e)}`);
+      if (seq === tabSeq) {
+        publishHistoryState('');
+        alert(`读取花笺失败: ${errMsg(e)}`);
+      }
     } finally {
-      loading = false;
+      if (seq === tabSeq) loading = false;
     }
   }
 
@@ -137,7 +172,7 @@
   async function createSnapshot(): Promise<void> {
     const tab = get(activeTab);
     if (!tab || !editor) return;
-    await flush();
+    await flush(activeKey, editor);
     const md = editor.getMarkdown();
     try {
       const meta = await api.createSnapshot(tab.boxId, tab.noteId, null);
@@ -168,16 +203,20 @@
     if (!tab || !ed || historyMoving) return;
     const key = activeKey;
     try {
+      // 先落盘：否则 1.2s 去抖里排队的那次自动保存会在恢复之后触发，
+      // 把刚恢复的正文又覆盖回去
+      await flush(key, ed);
+      if (activeKey !== key || editor !== ed) return;
       const body = await api.applySnapshot(tab.boxId, tab.noteId, meta.id);
-      // IPC 期间可能已切换标签，防止把旧笔记的快照内容写进新笔记（同 historyGo 的守卫）
+      // IPC 期间可能已切换标签，防止把旧笔记的快照内容写进新笔记
       if (activeKey !== key || editor !== ed) return;
       ed.setMarkdown(body);
+      const normalized = ed.getMarkdown();
+      liveMd = normalized;
+      if (!(await write(key, normalized))) return;
       // 快照恢复也是一次内容修改，同样记入退回/前进历史
-      recordModification(key, body);
+      recordModification(key, normalized);
       publishHistoryState(key);
-      setTabDirty(tab, false, body);
-      savedMdRef = body;
-      liveMd = body;
       split = null;
       saveState.set('saved');
     } catch (e) {
@@ -188,9 +227,8 @@
   /** 合并：保留左侧修改为正文，快照继续保存在历史中 */
   async function mergeSplit(): Promise<void> {
     if (!split || !editor) return;
-    const snap = split;
     split = null;
-    await flush();
+    await flush(activeKey, editor);
   }
 
   /** 放弃左侧修改，恢复为快照内容 */
@@ -200,10 +238,8 @@
     split = null;
     editor.setMarkdown(snap.snapshotMd);
     liveMd = snap.snapshotMd;
-    await flush();
+    await flush(activeKey, editor);
   }
-
-  let historyMoving = $state(false);
 
   /**
    * 修改历史移动：dir='back' 退回到上一次修改后的内容；dir='forward' 撤回退回。
@@ -216,15 +252,17 @@
     if (!ed || !key || historyMoving) return;
     historyMoving = true;
     try {
-      await flush();
-      // flush 期间可能已切换标签（旧编辑器被销毁），此时放弃本次移动
+      await flush(key, ed);
       if (activeKey !== key || editor !== ed) return;
       const target = dir === 'back' ? historyBack(key) : historyForward(key);
       if (target === null) return;
       publishHistoryState(key);
       ed.setMarkdown(target);
-      liveMd = target;
-      await flush();
+      const normalized = ed.getMarkdown();
+      liveMd = normalized;
+      // 方向移动不产生新记录：只把当前位置的记录同步成"实际落盘的文本"，
+      // 否则下次重开该花笺会因归一化差异而整条历史被重建
+      if (await write(key, normalized)) replaceCurrent(key, normalized);
     } finally {
       historyMoving = false;
     }
@@ -238,7 +276,7 @@
   async function exportNote(kind: 'md' | 'pdf'): Promise<void> {
     const tab = get(activeTab);
     if (!tab || !editor) return;
-    await flush();
+    await flush(activeKey, editor);
     const md = editor.getMarkdown();
     const box = boxById(tab.boxId);
     const title = box?.notes.find((n) => n.id === tab.noteId)?.title || '未命名花笺';
@@ -276,9 +314,35 @@
       void handleTabChange(tab);
     });
 
+    // 供「关闭花匣」调用：先落盘再关后端花匣
+    const unregister = registerFlush(() => flush(activeKey, editor));
+
+    // 关窗握手：Rust 侧拦截 CloseRequested 并发这个事件，最多等 500ms
+    let unlisten: (() => void) | undefined;
+    void getCurrentWindow()
+      .listen('flush-request', () => {
+        void (async () => {
+          try {
+            await flush(activeKey, editor);
+          } finally {
+            // 无论如何都要回 ack，否则窗口只能等超时
+            void api.flushAck();
+          }
+        })();
+      })
+      .then((un) => {
+        unlisten = un;
+      })
+      .catch(() => {
+        // 事件监听挂不上时由 Rust 侧超时兜底，不影响关闭窗口
+      });
+
     return () => {
       unsub();
-      void flush();
+      unregister();
+      unlisten?.();
+      if (liveTimer) clearTimeout(liveTimer);
+      void flush(activeKey, editor);
       void editor?.destroy();
     };
   });
@@ -317,9 +381,11 @@
         />
       {/if}
     </div>
-    {#if showSnapshots}
+    {#if showSnapshots && $activeTab}
       <SnapshotPanel
-        onCreateSnapshot={() => void createSnapshot()}
+        boxId={$activeTab.boxId}
+        noteId={$activeTab.noteId}
+        onCreateSnapshot={createSnapshot}
         onCompare={(m) => void compareSnapshot(m)}
         onRestored={(m) => restoreSnapshot(m)}
         onClose={() => (showSnapshots = false)}

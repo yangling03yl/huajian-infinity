@@ -1,5 +1,5 @@
-import { marked } from 'marked';
 import htmlToPdfmake from 'html-to-pdfmake';
+import { renderSafeMarkdown } from './sanitize';
 import pdfMake from 'pdfmake/build/pdfmake';
 import regularFontUrl from '../assets/fonts/NotoSansSC-Regular.ttf?url';
 import boldFontUrl from '../assets/fonts/NotoSansSC-Bold.ttf?url';
@@ -21,7 +21,8 @@ export function strToBase64(text: string): string {
 
 /** 正文 markdown → HTML（GFM：表格、任务列表、删除线等） */
 export function mdToHtml(md: string): string {
-  const html = marked.parse(md, { gfm: true, breaks: false, async: false }) as string;
+  // 与快照预览共用安全渲染器：导出同样不该把原始 HTML 带进 PDF/HTML
+  const html = renderSafeMarkdown(md);
   // 应用内没有本地图片，导出时以替代文本代替图片标签，避免 PDF 生成报错
   return html
     .replace(/<img[^>]*alt="([^"]*)"[^>]*>/g, '[$1]')

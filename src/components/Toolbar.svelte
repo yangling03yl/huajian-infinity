@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { editorSel } from '../lib/stores';
   import { FONT_SIZES, DEFAULT_FONT_SIZE } from '../lib/font-size';
   import type { EditorInstance } from '../lib/editor';
@@ -32,17 +31,14 @@
     onHistoryForward,
   }: Props = $props();
 
-  let sel = $state({ heading: 0, fontSize: null as number | null });
+  // 直接读 store（runes 模式下的自动订阅），不再手写 subscribe/unsubscribe
+  const sel = $derived($editorSel);
   let showCustom = $state(false);
   let customSize = $state('');
   let exportOpen = $state(false);
 
   const currentSize = $derived(sel.fontSize ?? DEFAULT_FONT_SIZE);
   const isCustom = $derived(sel.fontSize != null && !(FONT_SIZES as readonly number[]).includes(sel.fontSize));
-
-  onMount(() => {
-    return editorSel.subscribe((s) => (sel = s));
-  });
 
   function onHeadingChange(e: Event): void {
     editor?.setHeading(Number((e.target as HTMLSelectElement).value));

@@ -1,15 +1,16 @@
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
 use std::sync::Mutex;
 
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use crate::box_store::BoxStore;
-use crate::huazhong::{self, HuazhongData, PomodoroDayStats, PomodoroSettings};
 use crate::models::{BoxInfo, NoteMeta, SnapshotMeta};
 use crate::paths;
 use crate::settings::{self, AppSettings, AppState, WIDTH_MODE_FULL, WIDTH_MODE_LEFT75};
+use crate::FlushAck;
 
 /// 一次性启动提示（迁移成功/失败），`get_startup_notice` 读取后清空。
 ///
@@ -32,15 +33,14 @@ fn data_root(app: &tauri::AppHandle) -> PathBuf {
 }
 
 fn save_settings(app: &tauri::AppHandle, app_state: &State<'_, Mutex<AppState>>) {
-    if let Ok(s) = app_state.lock() {
-        let _ = settings::save(&paths::note_settings_path(&data_root(app)), &s.settings);
-    }
-}
-
-/// 把磁盘上的最新结果同步回进程内状态
-fn sync_huazhong(state: &State<'_, Mutex<HuazhongData>>, data: HuazhongData) {
-    if let Ok(mut guard) = state.lock() {
-        *guard = data;
+    let result = match app_state.lock() {
+        Ok(s) => settings::save(&paths::note_settings_path(&data_root(app)), &s.settings),
+        Err(_) => Err("内部状态锁定失败".to_string()),
+    };
+    if let Err(e) = result {
+        // 设置写不进去（磁盘满/无权限）必须让用户看见：主题、侧栏宽度，尤其是
+        // 「已打开的花匣列表」否则会静默丢失，重启后一个花匣都不剩
+        let _ = app.emit("settings-error", e);
     }
 }
 
@@ -52,6 +52,27 @@ pub fn open_box(
     path: String,
 ) -> Result<BoxInfo, String> {
     let info = store(&state)?.open(Path::new(&path))?;
+    // 用后端返回的路径去重后入表：同一文件已打开时（后端按路径去重）记的是原路径，
+    // 不会因为大小写/写法不同在 settings.boxes 里留下两条
+    let stored = info.path.clone();
+    if let Ok(mut s) = app_state.lock() {
+        if !s.settings.boxes.iter().any(|p| p == &stored) {
+            s.settings.boxes.push(stored);
+        }
+    }
+    save_settings(&app, &app_state);
+    Ok(info)
+}
+
+/// 新建花匣：名字由后端从文件名派生，前端不再传 name
+#[tauri::command]
+pub fn create_box(
+    app: tauri::AppHandle,
+    state: State<Mutex<BoxStore>>,
+    app_state: State<Mutex<AppState>>,
+    path: String,
+) -> Result<BoxInfo, String> {
+    let info = store(&state)?.create(Path::new(&path))?;
     if let Ok(mut s) = app_state.lock() {
         if !s.settings.boxes.iter().any(|p| p == &path) {
             s.settings.boxes.push(path);
@@ -61,19 +82,27 @@ pub fn open_box(
     Ok(info)
 }
 
+/// 重命名花匣：真改磁盘上的 .hxl 文件名。
+/// settings.boxes 里旧路径必须**原位替换**（不能像 open 那样 push、也不能像 close 那样 retain，
+/// 否则重启后的打开顺序会乱或丢）
 #[tauri::command]
-pub fn create_box(
+pub fn rename_box(
     app: tauri::AppHandle,
     state: State<Mutex<BoxStore>>,
     app_state: State<Mutex<AppState>>,
-    path: String,
-    name: String,
+    box_id: String,
+    new_name: String,
 ) -> Result<BoxInfo, String> {
-    let info = store(&state)?.create(Path::new(&path), name)?;
-    if let Ok(mut s) = app_state.lock() {
-        if !s.settings.boxes.iter().any(|p| p == &path) {
-            s.settings.boxes.push(path);
-        }
+    // 一次取锁内完成「读旧路径 + 改名」：分两次取锁的话，两个并发 rename 会各自
+    // 读到已经失效的旧路径，导致 settings.boxes 残留失效条目、重启后花匣不再自动打开
+    let (old_path, info) = {
+        let mut s = store(&state)?;
+        let old_path = s.get(&box_id)?.path.display().to_string();
+        let info = s.rename_box(&box_id, &new_name)?;
+        (old_path, info)
+    };
+    if let Ok(mut st) = app_state.lock() {
+        settings::replace_box_path(&mut st.settings.boxes, &old_path, &info.path);
     }
     save_settings(&app, &app_state);
     Ok(info)
@@ -180,8 +209,8 @@ pub fn reorder_notes(
 
 #[tauri::command]
 pub fn save_box(state: State<Mutex<BoxStore>>, box_id: String) -> Result<(), String> {
-    let s = store(&state)?;
-    let b = s.get(&box_id)?;
+    let mut s = store(&state)?;
+    let b = s.get_mut(&box_id)?;
     BoxStore::repack(b)
 }
 
@@ -320,117 +349,25 @@ pub fn get_startup_hx(startup: State<Mutex<Option<String>>>) -> Option<String> {
     startup.lock().ok().and_then(|s| s.clone())
 }
 
+/// 启动时某个花匣打不开（被移动/删除/U 盘拔出）：把它从"下次自动打开"里移除，
+/// 否则每次启动都会再弹一次错误
 #[tauri::command]
-pub fn reveal_in_folder(app: tauri::AppHandle, path: String) -> Result<(), String> {
-    use tauri_plugin_opener::OpenerExt;
-    app.opener()
-        .reveal_item_in_dir(&path)
-        .map_err(|e| format!("打开所在文件夹失败: {e}"))
-}
-
-// ---- 番茄钟 / 花钟数据（全部读写 花钟.hz，不再碰 settings.json 的 pomodoro） ----
-
-/// 花钟数据文件绝对路径（供「打开数据位置」）
-#[tauri::command]
-pub fn huazhong_path(app: tauri::AppHandle) -> String {
-    let root = data_root(&app);
-    let file = paths::huazhong_path(&root);
-    // 还没记录过任何番茄时数据文件不存在：这时退化为返回数据目录本身，
-    // 保证「打开数据位置」总能把用户带到正确的地方，而不是静默失败。
-    if file.exists() {
-        return file.to_string_lossy().to_string();
+pub fn drop_box_path(
+    app: tauri::AppHandle,
+    app_state: State<Mutex<AppState>>,
+    path: String,
+) -> Result<(), String> {
+    if let Ok(mut st) = app_state.lock() {
+        st.settings.boxes.retain(|p| p != &path);
     }
-    let _ = std::fs::create_dir_all(&root);
-    root.to_string_lossy().to_string()
-}
-
-/// 读取番茄钟设置（来自 花钟.hz；只读，直接 load 不需要锁）
-#[tauri::command]
-pub fn get_pomodoro_settings(
-    app: tauri::AppHandle,
-    hz_state: State<Mutex<HuazhongData>>,
-) -> PomodoroSettings {
-    let data = huazhong::load(&data_root(&app));
-    let settings = data.settings.clone();
-    sync_huazhong(&hz_state, data);
-    settings
-}
-
-/// 保存番茄钟设置（模式、番茄时长、休息时长、循环次数），越界值自动夹取
-#[tauri::command]
-pub fn set_pomodoro_settings(
-    app: tauri::AppHandle,
-    hz_state: State<Mutex<HuazhongData>>,
-    mode: String,
-    focus_minutes: u32,
-    break_minutes: u32,
-    loops: u32,
-) -> Result<(), String> {
-    let data = huazhong::set_settings(
-        &data_root(&app),
-        PomodoroSettings {
-            mode,
-            focus_minutes,
-            break_minutes,
-            loops,
-        },
-    )?;
-    sync_huazhong(&hz_state, data);
+    save_settings(&app, &app_state);
     Ok(())
 }
 
-/// 记录一个完成的番茄（秒）。`end` 由后端按本地时间取秒级时刻，跨午夜归入完成当日。
+/// 前端已完成「关窗前最后一次保存」，允许主窗口销毁
 #[tauri::command]
-pub fn record_pomodoro(
-    app: tauri::AppHandle,
-    hz_state: State<Mutex<HuazhongData>>,
-    seconds: u64,
-    mode: String,
-) -> Result<(), String> {
-    let data = huazhong::record(&data_root(&app), seconds, &mode)?;
-    sync_huazhong(&hz_state, data);
-    Ok(())
-}
-
-/// 读取某年某月（month 为 1-12）的番茄统计（只返回该月有记录的日期）
-#[tauri::command]
-pub fn get_pomodoro_stats(
-    app: tauri::AppHandle,
-    hz_state: State<Mutex<HuazhongData>>,
-    year: i32,
-    month: u32,
-) -> Vec<PomodoroDayStats> {
-    let data = huazhong::load(&data_root(&app));
-    let stats = data.month(year, month);
-    sync_huazhong(&hz_state, data);
-    stats
-}
-
-/// 删除任意日期任意一条番茄记录
-#[tauri::command]
-pub fn delete_pomodoro_session(
-    app: tauri::AppHandle,
-    hz_state: State<Mutex<HuazhongData>>,
-    date: String,
-    id: String,
-) -> Result<(), String> {
-    let data = huazhong::delete_session(&data_root(&app), &date, &id)?;
-    sync_huazhong(&hz_state, data);
-    Ok(())
-}
-
-/// 缩短一条已完成番茄的时长（只能减短，不能加长）
-#[tauri::command]
-pub fn shorten_pomodoro_session(
-    app: tauri::AppHandle,
-    hz_state: State<Mutex<HuazhongData>>,
-    date: String,
-    id: String,
-    seconds: u64,
-) -> Result<(), String> {
-    let data = huazhong::shorten_session(&data_root(&app), &date, &id, seconds)?;
-    sync_huazhong(&hz_state, data);
-    Ok(())
+pub fn flush_ack(ack: State<FlushAck>) {
+    ack.0.store(true, Ordering::SeqCst);
 }
 
 /// 一次性启动提示（迁移成功/失败），读取后清空

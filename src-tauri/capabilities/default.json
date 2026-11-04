@@ -9,11 +9,12 @@
     "core:window:allow-set-fullscreen",
     "core:window:allow-is-fullscreen",
     "core:window:allow-is-maximized",
+    "core:window:allow-maximize",
+    "core:window:allow-unmaximize",
     "core:window:allow-toggle-maximize",
     "core:window:allow-set-focus",
     "core:window:allow-unminimize",
     "core:event:default",
-    "dialog:default",
-    "opener:default"
+    "dialog:default"
   ]
 }

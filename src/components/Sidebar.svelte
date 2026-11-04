@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { boxes } from '../lib/stores';
-  import { api } from '../lib/api';
-  import { claimDrag, clickSuppressed, makeGhost, positionGhost, releaseDrag, removeGhost } from '../lib/dnd';
+  import { boxes, showHint } from '../lib/stores';
+  import { api, errMsg } from '../lib/api';
+  import { claimDrag, makeGhost, nudgeScrollContainer, positionGhost, releaseDrag, removeGhost } from '../lib/dnd';
   import BoxItem from './BoxItem.svelte';
 
   interface Props {
@@ -36,9 +36,15 @@
   }
 
   function onWindowPointerMove(e: PointerEvent): void {
-    if (ghost) {
-      positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
-      nudgeList(e.clientY);
+    // pointerup 丢在窗口外时按键已松开：丢弃挂起会话，避免指针移回就凭空起拖
+    if (pending && e.buttons === 0) {
+      pending = null;
+      return;
+    }
+    // 以 dragIdx 判定会话已开启：即使没有 ghost 也要继续跟踪落点
+    if (ghost || dragIdx !== -1) {
+      if (ghost) positionGhost(ghost, e.clientX, e.clientY, grabOff.x, grabOff.y);
+      nudgeScrollContainer(boxListEl ?? null, e.clientY);
       updateOverIdx(e.clientX, e.clientY);
       return;
     }
@@ -78,18 +84,6 @@
     }
   }
 
-  /** 指针靠近侧栏上下边缘时自动滚动花匣列表 */
-  function nudgeList(clientY: number): void {
-    if (!boxListEl) return;
-    const rect = boxListEl.getBoundingClientRect();
-    const edge = 28;
-    if (clientY < rect.top + edge) {
-      boxListEl.scrollTop -= Math.max(4, (rect.top + edge - clientY) / 3);
-    } else if (clientY > rect.bottom - edge) {
-      boxListEl.scrollTop += Math.max(4, (clientY - (rect.bottom - edge)) / 3);
-    }
-  }
-
   function endDrag(commit: boolean): void {
     const from = dragIdx;
     const to = overIdx;
@@ -98,28 +92,42 @@
     dragIdx = -1;
     overIdx = -1;
     pending = null;
-    releaseDrag(dragOwner);
+    // 取消型结束不设置 click 抑制
+    releaseDrag(dragOwner, commit);
     if (!commit || from < 0 || to < 0 || from === to) return;
-    const list = $boxes;
-    if (from >= list.length || to > list.length) return;
-    const next = [...list];
-    const [moved] = next.splice(from, 1);
-    next.splice(to > from ? to - 1 : to, 0, moved);
-    boxes.set(next);
-    void api.reorderBoxes(next.map((b) => b.info.id));
+
+    // 按 boxId 重算顺序：拖拽期间列表可能因 refreshNotes/开关花匣而变化，
+    // 用拖拽开始时的下标会插错位置
+    const snapshot = $boxes;
+    const moved = snapshot[from];
+    if (!moved) return;
+    const targetId = snapshot[to]?.info.id ?? null;
+    const rest = snapshot.filter((b) => b.info.id !== moved.info.id);
+    const insertAt = targetId === null ? rest.length : rest.findIndex((b) => b.info.id === targetId);
+    if (insertAt < 0) return;
+    const next = [...rest.slice(0, insertAt), moved, ...rest.slice(insertAt)];
+    const order = next.map((b) => b.info.id);
+    if (order.every((id, i) => id === snapshot[i]?.info.id)) return; // 顺序未变
+
+    boxes.set(next); // 乐观更新
+    void api.reorderBoxes(order).catch((e: unknown) => {
+      boxes.set(snapshot); // 失败回滚，保证界面与磁盘一致
+      showHint(`花匣排序保存失败：${errMsg(e)}`);
+    });
   }
 
   function onWindowPointerUp(): void {
-    if (ghost) endDrag(true);
+    // 只要会话已开启就必须 releaseDrag，否则拖拽权永久泄漏
+    if (ghost || dragIdx !== -1) endDrag(true);
     else pending = null;
   }
 
   function onWindowPointerCancel(): void {
-    if (ghost || pending) endDrag(false);
+    if (ghost || pending || dragIdx !== -1) endDrag(false);
   }
 
   function onWindowKeyDown(e: KeyboardEvent): void {
-    if (e.key === 'Escape' && (ghost || pending)) endDrag(false);
+    if (e.key === 'Escape' && (ghost || pending || dragIdx !== -1)) endDrag(false);
   }
 
   $effect(() => {

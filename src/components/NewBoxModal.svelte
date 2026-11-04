@@ -1,7 +1,7 @@
 <script lang="ts">
   import { save } from '@tauri-apps/plugin-dialog';
   import { api, errMsg } from '../lib/api';
-  import { openBox } from '../lib/stores';
+  import { openBox, showHint } from '../lib/stores';
 
   interface Props {
     onClose: () => void;
@@ -21,8 +21,10 @@
         filters: [{ name: '花匣', extensions: ['hxl'] }],
       });
       if (!path) return;
-      const info = await api.createBox(path, boxName);
+      // 花匣名只由文件名决定：用户在保存对话框里改了文件名，就以新文件名为准
+      const info = await api.createBox(path);
       await openBox(info);
+      showHint(`已创建花匣「${info.name}」`);
       onClose();
     } catch (e) {
       alert(errMsg(e));
@@ -43,6 +45,7 @@
         if (e.key === 'Enter') void create();
       }}
     />
+    <p class="hint">花匣名就是文件名；若在保存对话框里改了文件名，将以文件名为准。</p>
     <div class="modal-actions">
       <button class="ghost-btn" onclick={onClose} disabled={busy}>取消</button>
       <button class="primary-btn" onclick={() => void create()} disabled={busy}>
@@ -51,3 +54,12 @@
     </div>
   </div>
 </div>
+
+<style>
+  .hint {
+    margin: -6px 0 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    color: var(--text-dim);
+  }
+</style>

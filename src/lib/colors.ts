@@ -20,11 +20,3 @@ export function nextColor(used: string[]): string {
   }
   return PALETTE[Math.floor(Math.random() * PALETTE.length)];
 }
-
-export function isLight(color: string): boolean {
-  const hex = color.replace('#', '');
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
-  return (r * 299 + g * 587 + b * 114) / 1000 > 150;
-}

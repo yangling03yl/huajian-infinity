@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { marked } from 'marked';
   import { computeDiff, diffStats } from '../lib/diff';
+  import { renderSafeMarkdown } from '../lib/sanitize';
   import type { SnapshotMeta } from '../lib/types';
 
   interface Props {
@@ -21,9 +21,9 @@
 
   const lines = $derived(computeDiff(snapshotMd, currentMd));
   const stats = $derived(diffStats(lines));
-  const previewHtml = $derived(
-    marked.parse(snapshotMd, { gfm: true, breaks: false, async: false }) as string,
-  );
+  // 快照内容来自 .hxl 文件（可能由他人分享），必须走安全渲染器：
+  // 直接 {@html marked.parse(...)} 会让 <img onerror=…> 在应用内执行
+  const previewHtml = $derived(renderSafeMarkdown(snapshotMd));
 
   function fmtTime(iso: string): string {
     const d = new Date(iso);
@@ -72,7 +72,6 @@
     </div>
   {:else}
     <div class="preview-body">
-      <!-- eslint-disable-next-line svelte/no-at-html-tags -->
       {@html previewHtml}
     </div>
   {/if}

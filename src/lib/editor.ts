@@ -13,8 +13,6 @@ export interface EditorInstance {
   getMarkdown: () => string;
   /** 整体替换当前内容（用于恢复快照版本） */
   setMarkdown: (md: string) => void;
-  /** 在光标处插入文本 */
-  insertText: (text: string) => void;
   /** 设置当前块标题级别，0 = 正文 */
   setHeading: (level: number) => void;
   /** 设置选中文字/光标格式的字号，null = 恢复默认 */
@@ -148,15 +146,10 @@ export async function createEditor(
       editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const doc = ctx.get(parserCtx)(md);
-        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, doc));
+        // 传 Fragment 而不是 Node：替换整个文档内容
+        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content));
       });
       lastMd = md;
-    },
-    insertText: (text: string) => {
-      editor.action((ctx) => {
-        const view = ctx.get(editorViewCtx);
-        view.dispatch(view.state.tr.insertText(text));
-      });
     },
     setHeading: (level: number) => {
       editor.action((ctx) => {

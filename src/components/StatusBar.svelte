@@ -1,12 +1,19 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
-  import { activeTab, boxById, saveState, statusMsg, statusHint, boxes, wordCount } from '../lib/stores';
-  import { isLight } from '../lib/colors';
-  import PomodoroStatus from './PomodoroStatus.svelte';
+  import { activeTab, boxes, saveState, statusMsg, statusHint, wordCount } from '../lib/stores';
 
-  const activeBox = $derived($activeTab ? boxById($activeTab.boxId) : null);
-  const noteCount = $derived($activeTab ? activeBox?.info.note_count ?? 0 : 0);
+  /**
+   * 直接读 `$boxes` 而不是 `boxById()`：后者内部是 `get(boxes)`，不参与依赖收集，
+   * 改名/新建/删除花笺后状态栏会一直显示旧数据。
+   */
+  const activeBox = $derived(
+    $activeTab ? ($boxes.find((b) => b.info.id === $activeTab!.boxId) ?? null) : null,
+  );
+  const activeNote = $derived(
+    $activeTab ? (activeBox?.notes.find((n) => n.id === $activeTab!.noteId) ?? null) : null,
+  );
+  const noteCount = $derived(activeBox?.info.note_count ?? 0);
   const saveText = $derived(
     $saveState === 'saving' ? '保存中…' : $saveState === 'saved' ? '已保存' : $saveState === 'error' ? '保存失败' : '',
   );
@@ -14,7 +21,11 @@
   let ver = $state('');
 
   onMount(() => {
-    void getVersion().then((v) => (ver = `V${v}`));
+    void getVersion()
+      .then((v) => (ver = `V${v}`))
+      .catch(() => {
+        // 取不到版本号时保持空白，不影响其它信息
+      });
   });
 </script>
 
@@ -22,7 +33,7 @@
   <div class="statusbar-inner">
     <span class="left" title={activeBox?.info.path}>
     {#if activeBox}
-      <span class="dot" style="background:{$activeTab ? (activeBox.notes.find(n => n.id === $activeTab?.noteId)?.color ?? '#888') : '#888'}"></span>
+      <span class="dot" style="background:{activeNote?.color ?? '#888'}"></span>
       {activeBox.info.name}
       <span class="dim">· {noteCount} 篇花笺</span>
     {:else}
@@ -38,7 +49,6 @@
     {#if $statusMsg}
       <span class="msg" title={$statusMsg}>{$statusMsg}</span>
     {/if}
-    <PomodoroStatus />
     {#if $activeTab}
       {#if $wordCount !== null}
         <span class="count" title="汉字、字母、数字、标点各计 1，不含空格换行">{$wordCount} 字</span>
