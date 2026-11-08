@@ -147,14 +147,25 @@ pub fn parse(raw: &str) -> NoteDoc {
         return NoteDoc { body: text, snapshots: Vec::new() };
     }
 
-    // 缺结束标记时取到文件尾（容错），且不再越界切片
+    // 结束标记必须出现在**列 0**（不 trim）。旧版本写出的文件没有行首转义，正文里
+    // 若有一行「缩进 + 标记」（例如从别处粘贴的代码块），trim 后会被误判成结束标记，
+    // 吞掉其后全部内容；精确匹配可彻底避免这一类截断。
+    // 找不到结束标记时兜底到快照段起点，避免把 <!--hxl:snapshots--> 之后也算进正文。
     let body_end = lines
         .iter()
         .enumerate()
         .skip(first + 1)
-        .find(|(_, l)| l.trim() == BODY_END)
+        .find(|(_, l)| **l == BODY_END)
         .map(|(i, _)| i)
-        .unwrap_or(lines.len());
+        .unwrap_or_else(|| {
+            lines
+                .iter()
+                .enumerate()
+                .skip(first + 1)
+                .find(|(_, l)| l.trim() == SNAPS_START)
+                .map(|(i, _)| i)
+                .unwrap_or(lines.len())
+        });
     let body = map_lines(&lines[first + 1..body_end].join("\n"), unescape_line);
 
     let mut snapshots = Vec::new();
@@ -395,6 +406,48 @@ mod tests {
         // 只有开始标记、没有正文
         let doc = parse("<!--hxl:body-->");
         assert_eq!(doc.body, "");
+    }
+
+    /// 正文里「缩进 + 结束标记」的一行：新格式会转义，往返必须完整
+    #[test]
+    fn indented_body_end_is_content() {
+        let body = "第一段\n\n    <!--hxl:/body-->\n\n第三段";
+        let doc = NoteDoc { body: body.into(), snapshots: Vec::new() };
+        assert_eq!(parse(&serialize(&doc)).body, body);
+    }
+
+    /// 旧文件（无行首转义）里缩进的结束标记不得截断正文
+    #[test]
+    fn legacy_file_with_indented_end_marker_keeps_tail() {
+        let raw = concat!(
+            "<!--hxl:body-->\n",
+            "第一段\n",
+            "\n",
+            "    <!--hxl:/body-->\n",
+            "\n",
+            "第三段\n",
+            "<!--hxl:/body-->\n",
+            "\n",
+            "<!--hxl:snapshots-->\n",
+            "<!--hxl:/snapshots-->\n",
+        );
+        let doc = parse(raw);
+        assert_eq!(doc.body, "第一段\n\n    <!--hxl:/body-->\n\n第三段");
+        assert!(doc.snapshots.is_empty());
+    }
+
+    /// 缺结束标记时，兜底不能把快照段算进正文
+    #[test]
+    fn missing_body_end_stops_before_snapshots() {
+        let raw = concat!(
+            "<!--hxl:body-->\n",
+            "正文没有结束标记\n",
+            "<!--hxl:snapshots-->\n",
+            "<!--hxl:/snapshots-->\n",
+        );
+        let doc = parse(raw);
+        assert_eq!(doc.body, "正文没有结束标记");
+        assert!(doc.snapshots.is_empty());
     }
 
     /// 尾部空白（Markdown 硬换行、空行）必须原样保留

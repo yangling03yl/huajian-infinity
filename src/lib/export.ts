@@ -49,6 +49,9 @@ function loadPdfFonts(): Promise<Record<string, string>> {
 /** pdfmake 段落样式（继承 defaultStyle 的字体与行高） */
 const PDF_STYLES: Record<string, Record<string, unknown>> = {
   p: { margin: [0, 0, 0, 4] },
+  // 段落字号写在整段 <span style="font-size: Npx"> 上，html-to-pdfmake 会把它
+  // 转成 fontSize；这里显式声明 span，避免行内标签被当成未知标签丢弃
+  span: {},
   h1: { fontSize: 21, bold: true, margin: [0, 14, 0, 9], color: '#1b1b1b' },
   h2: { fontSize: 16, bold: true, margin: [0, 12, 0, 7], color: '#242424' },
   h3: { fontSize: 13.5, bold: true, margin: [0, 10, 0, 5], color: '#2d2d2d' },

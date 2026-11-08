@@ -37,8 +37,15 @@
   let customSize = $state('');
   let exportOpen = $state(false);
 
-  const currentSize = $derived(sel.fontSize ?? DEFAULT_FONT_SIZE);
-  const isCustom = $derived(sel.fontSize != null && !(FONT_SIZES as readonly number[]).includes(sel.fontSize));
+  /** 标题字号由级别决定，光标在标题内时不允许调字号 */
+  const headingLocked = $derived(sel.heading !== 0);
+  const isCustom = $derived(
+    sel.fontSize != null && !(FONT_SIZES as readonly number[]).includes(sel.fontSize),
+  );
+  /** 下拉当前值：未设置字号时选中「默认」，自定义字号时选中自定义项 */
+  const sizeValue = $derived(
+    sel.fontSize == null ? '__default__' : isCustom ? '__custom__' : String(sel.fontSize),
+  );
 
   function onHeadingChange(e: Event): void {
     editor?.setHeading(Number((e.target as HTMLSelectElement).value));
@@ -46,17 +53,16 @@
 
   function onSizeChange(e: Event): void {
     const v = (e.target as HTMLSelectElement).value;
-    if (v === '__custom__') {
+    if (v === '__custom__' || v === '__custom_edit__') {
       showCustom = true;
       return;
     }
-    if (v === '__clear__') {
+    showCustom = false;
+    if (v === '__default__') {
       editor?.setFontSize(null);
-      showCustom = false;
       return;
     }
     editor?.setFontSize(Number(v));
-    showCustom = false;
   }
 
   function applyCustom(): void {
@@ -144,22 +150,31 @@
     </select>
   </label>
 
-  <label class="group" title="字号（Ctrl+Alt+1~6 快捷设置，Ctrl+Alt+0 恢复默认）">
+  <label
+    class="group"
+    title={headingLocked
+      ? '标题字号由级别决定，只有正文段落可以调字号'
+      : '段落字号（整段生效）：默认＝不写字号，由应用统一样式决定；固定＝把 px 写进文档。Ctrl+Alt+1~6 快捷设置，Ctrl+Alt+0 恢复默认'}
+  >
     <span class="label">字号</span>
-    {#if isCustom}
-      <select disabled={!editor} value="__custom__" onchange={onSizeChange}>
-        <option value="__custom__">{currentSize}px（自定义）</option>
-        <option value="__clear__">恢复默认 (Ctrl+Alt+0)</option>
-      </select>
-    {:else}
-      <select disabled={!editor} value={currentSize} onchange={onSizeChange}>
-        {#each FONT_SIZES as s (s)}
-          <option value={s}>{s}px{s === DEFAULT_FONT_SIZE ? '（正文）' : ''}</option>
-        {/each}
+    <select
+      disabled={!editor || headingLocked}
+      value={sizeValue}
+      onchange={onSizeChange}
+      aria-label="段落字号"
+    >
+      {#if isCustom}
+        <option value="__custom__">{sel.fontSize}px（自定义）</option>
+        <option value="__custom_edit__">自定义…</option>
+      {/if}
+      <option value="__default__">默认（16px）</option>
+      {#each FONT_SIZES as s (s)}
+        <option value={s}>{s}px{s === DEFAULT_FONT_SIZE ? '（固定）' : ''}</option>
+      {/each}
+      {#if !isCustom}
         <option value="__custom__">自定义…</option>
-        <option value="__clear__">恢复默认 (Ctrl+Alt+0)</option>
-      </select>
-    {/if}
+      {/if}
+    </select>
   </label>
 
   {#if showCustom}

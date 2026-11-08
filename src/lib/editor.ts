@@ -1,11 +1,12 @@
 import type { Ctx } from '@milkdown/ctx';
 import type { Editor as MilkdownEditor } from '@milkdown/core';
+import type { Selection } from '@milkdown/prose/state';
 import { editorSel, wordCount } from './stores';
 import {
-  fontSizeSchema,
-  fontSizeKeymap,
-  remarkFontSizeSpanPlugin,
-  setFontSizeCommand,
+  createParagraphStylePlugins,
+  headingInputGuard,
+  setParagraphFontSizeCommand,
+  type ParagraphSchemaLike,
 } from './font-size';
 
 export interface EditorInstance {
@@ -13,10 +14,12 @@ export interface EditorInstance {
   getMarkdown: () => string;
   /** 整体替换当前内容（用于恢复快照版本） */
   setMarkdown: (md: string) => void;
-  /** 设置当前块标题级别，0 = 正文 */
+  /** 设置当前段落标题级别，0 = 正文（同时回到默认字号） */
   setHeading: (level: number) => void;
-  /** 设置选中文字/光标格式的字号，null = 恢复默认 */
+  /** 设置当前段落（或选区覆盖的所有段落）的字号，null = 恢复默认 16px */
   setFontSize: (size: number | null) => void;
+  /** 丢弃尚未触发的去抖自动保存（立即落盘前调用，防止旧内容后写覆盖新内容） */
+  cancelPendingSave: () => void;
   destroy: () => Promise<void>;
 }
 
@@ -24,6 +27,24 @@ const AUTO_SAVE_MS = 1200;
 
 function countChars(text: string): number {
   return [...text].filter((c) => !/\s/u.test(c)).length;
+}
+
+/**
+ * 把当前选区的块级样式同步到工具栏。
+ *
+ * 关键：`updated` 与 `selectionUpdated` 都要调用。只监听选区变化时，
+ * 「用快捷键/下拉/Backspace 改了标题级别但光标位置没动」不会触发刷新，
+ * 工具栏会一直显示旧级别——这正是此前「标题等级和正文机制不清晰」的直接原因。
+ */
+function syncSelection(selection: Selection): void {
+  const parent = selection.$from.parent;
+  const isHeading = parent.type.name === 'heading';
+  const heading = isHeading ? (parent.attrs.level as number) : 0;
+  const fontSize =
+    !isHeading && parent.type.name === 'paragraph'
+      ? ((parent.attrs.fontSize as number | null) ?? null)
+      : null;
+  editorSel.set({ heading, fontSize });
 }
 
 /**
@@ -41,12 +62,20 @@ export async function createEditor(
 ): Promise<EditorInstance> {
   const [
     { Editor, rootCtx, defaultValueCtx, serializerCtx, editorViewCtx, commandsCtx, parserCtx },
-    { commonmark, headingKeymap, paragraphKeymap, wrapInHeadingCommand, turnIntoTextCommand },
+    {
+      commonmark,
+      headingKeymap,
+      paragraphKeymap,
+      paragraphSchema,
+      wrapInHeadingCommand,
+      turnIntoTextCommand,
+    },
     { gfm },
     { nord },
     { listener, listenerCtx },
     { history },
     { Selection },
+    { splitBlockAs },
   ] = await Promise.all([
     import('@milkdown/core'),
     import('@milkdown/preset-commonmark'),
@@ -55,6 +84,7 @@ export async function createEditor(
     import('@milkdown/plugin-listener'),
     import('@milkdown/plugin-history'),
     import('@milkdown/prose/state'),
+    import('@milkdown/prose/commands'),
   ]);
 
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -78,7 +108,8 @@ export async function createEditor(
         TurnIntoH4: { shortcuts: 'Mod-4' },
         TurnIntoH5: { shortcuts: 'Mod-5' },
         TurnIntoH6: { shortcuts: 'Mod-6' },
-        DowngradeHeading: { shortcuts: ['Delete', 'Backspace'] },
+        // 只保留 Backspace：Delete 在标题开头原本也会降级，用户想删字却把标题降了级
+        DowngradeHeading: { shortcuts: 'Backspace' },
       });
       ctx.set(paragraphKeymap.key, {
         TurnIntoText: { shortcuts: 'Mod-0' },
@@ -89,31 +120,28 @@ export async function createEditor(
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => onChange(md), AUTO_SAVE_MS);
       });
-      ctx.get(listenerCtx).updated((_ctx, doc) => {
+      ctx.get(listenerCtx).updated((updatedCtx, doc) => {
         wordCount.set(countChars(doc.textContent));
+        // 文档变化也要刷新样式：改标题级别 / 快照恢复 / 撤销都不会移动光标
+        syncSelection(updatedCtx.get(editorViewCtx).state.selection);
       });
       ctx.get(listenerCtx).selectionUpdated((_ctx, selection) => {
-        const parent = selection.$from.parent;
-        const heading = parent.type.name === 'heading' ? (parent.attrs.level as number) : 0;
-        let fontSize: number | null = null;
-        for (const mark of selection.$from.marks()) {
-          if (mark.type.name === 'fontSizeSpan') {
-            fontSize = mark.attrs.size as number;
-            break;
-          }
-        }
-        editorSel.set({ heading, fontSize });
+        syncSelection(selection);
       });
     })
+    // 必须先于 commonmark：抢在 heading 输入规则之前把 `# ` 当普通文本插入
+    .use(headingInputGuard)
     .use(nordPlugin)
     .use(commonmark)
     .use(gfm)
+    .use(
+      createParagraphStylePlugins({
+        paragraphSchema: paragraphSchema as unknown as ParagraphSchemaLike,
+        splitBlockAs,
+      }),
+    )
     .use(listener)
     .use(history)
-    .use(fontSizeSchema)
-    .use(remarkFontSizeSpanPlugin)
-    .use(setFontSizeCommand)
-    .use(fontSizeKeymap)
     .create();
 
   editor.action((ctx) => {
@@ -121,6 +149,7 @@ export async function createEditor(
     // 初始字数：字数监听只在后续事务上触发，这里先按初始文档计一次，
     // 保证刚切换到的花笺立刻显示自己的字数，而不是残留上一篇的数值
     wordCount.set(countChars(view.state.doc.textContent));
+    syncSelection(view.state.selection);
     // 空花笺：光标自动置于第 0 行第 0 个字符并聚焦
     if (initialMd.trim().length === 0) {
       const doc = view.state.doc;
@@ -146,8 +175,11 @@ export async function createEditor(
       editor.action((ctx) => {
         const view = ctx.get(editorViewCtx);
         const doc = ctx.get(parserCtx)(md);
-        // 传 Fragment 而不是 Node：替换整个文档内容
-        view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content));
+        const tr = view.state.tr.replaceWith(0, view.state.doc.content.size, doc.content);
+        // 恢复后不能带着替换前的光标格式：否则继续输入的新文字仍是旧字号/旧样式
+        tr.setStoredMarks([]);
+        tr.setSelection(Selection.atStart(tr.doc));
+        view.dispatch(tr);
       });
       lastMd = md;
     },
@@ -161,8 +193,12 @@ export async function createEditor(
     setFontSize: (size: number | null) => {
       editor.action((ctx) => {
         const commands = ctx.get(commandsCtx);
-        commands.call(setFontSizeCommand.key, size);
+        commands.call(setParagraphFontSizeCommand.key, size);
       });
+    },
+    cancelPendingSave: () => {
+      if (timer) clearTimeout(timer);
+      timer = null;
     },
     destroy: async () => {
       if (timer) clearTimeout(timer);

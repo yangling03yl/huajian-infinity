@@ -30,6 +30,7 @@ export function showHint(text: string): void {
 }
 /** 当前打开花笺的字数；null 表示尚未载入（状态栏以「-」占位） */
 export const wordCount = writable<number | null>(null);
+/** 光标所在段落的样式；heading 0 = 正文，fontSize null = 默认字号（16px） */
 export const editorSel = writable<{ heading: number; fontSize: number | null }>({ heading: 0, fontSize: null });
 
 function findBox(boxId: string): OpenBox | undefined {

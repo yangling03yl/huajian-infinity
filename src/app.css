@@ -3,6 +3,8 @@
   --font-ui: 'PingFang SC', 'Noto Sans CJK SC', 'Microsoft YaHei', 'Source Han Sans SC',
     system-ui, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, 'Cascadia Mono', monospace;
+  /* 正文默认字号：与 src/lib/font-size.ts 的 DEFAULT_FONT_SIZE 保持一致 */
+  --editor-font-size: 16px;
 
   --bg: #faf9f7;
   --bg-panel: #f4f2ee;
@@ -173,12 +175,26 @@ input {
   outline: none;
 }
 
-/* ---- 编辑器正文随主题配色 ---- */
-.editor-container.prose,
+/* ---- 编辑器正文随主题配色与层级 ----
+   `.prose` 由 EditorPane 挂到编辑器容器上；此前只写了选择器却没加类，
+   整段规则是死代码，深色主题下标题与正文由 nord 浅色主题决定，几乎分不开。 */
+.editor-container.prose {
+  color: var(--text);
+  /* 正文默认字号：段落字号为 null 时的落点，与 DEFAULT_FONT_SIZE 共用同一个变量 */
+  font-size: var(--editor-font-size);
+  line-height: 1.85;
+}
 .editor-container.prose p,
 .editor-container.prose li {
   color: var(--text);
+  font-size: inherit;
 }
+.editor-container.prose a {
+  color: var(--accent);
+}
+
+/* 标题层级：字号由级别固定，不参与段落字号。
+   用比 nord 更具体的选择器覆盖，保证深色主题下层级、字重、间距都可分辨。 */
 .editor-container.prose h1,
 .editor-container.prose h2,
 .editor-container.prose h3,
@@ -186,9 +202,34 @@ input {
 .editor-container.prose h5,
 .editor-container.prose h6 {
   color: var(--text);
+  font-weight: 700;
+  line-height: 1.35;
+  letter-spacing: 0.01em;
 }
-.editor-container.prose a {
-  color: var(--accent);
+.editor-container.prose h1 {
+  font-size: 1.9em;
+  margin: 1.1em 0 0.5em;
+}
+.editor-container.prose h2 {
+  font-size: 1.55em;
+  margin: 1em 0 0.45em;
+}
+.editor-container.prose h3 {
+  font-size: 1.3em;
+  margin: 0.9em 0 0.4em;
+}
+.editor-container.prose h4 {
+  font-size: 1.15em;
+  margin: 0.8em 0 0.35em;
+}
+.editor-container.prose h5 {
+  font-size: 1.05em;
+  margin: 0.75em 0 0.3em;
+}
+.editor-container.prose h6 {
+  font-size: 1em;
+  margin: 0.7em 0 0.3em;
+  color: var(--text-dim);
 }
 
 /* ---- 侧边栏指针拖拽幽灵（克隆的行/标题，跟随指针） ---- */

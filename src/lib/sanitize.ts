@@ -50,10 +50,24 @@ function sanitizeUrl(raw: string | null | undefined): string | null {
   return SAFE_PROTOCOLS.has(m[1].toLowerCase()) ? url : null;
 }
 
+/**
+ * 段落字号的整段 span：应用自身写出的唯一一种合法原始 HTML。
+ * 只放行「style 里恰好是 font-size: N px」这一种形态，其余属性/事件一律不认。
+ */
+const FONT_SPAN_OPEN_RE = /^<span\s+style="font-size:\s*\d{1,3}px"\s*>$/i;
+const SPAN_CLOSE_RE = /^<\/span\s*>$/i;
+
 const safeRenderer: RendererObject = {
   /** 原始 HTML（块级/行内都走这里）：转义成纯文本，看得见但不执行 */
   html(token) {
-    const text = escapeHtml(token.text ?? '');
+    const raw = token.text ?? '';
+    // 字号 span 必须放行，否则快照预览与 PDF 会把整段的标签当文字显示出来。
+    // 判定极窄：必须是非块级、必须完整匹配上述两条正则，不解析任意 style。
+    if (!token.block) {
+      const trimmed = raw.trim();
+      if (FONT_SPAN_OPEN_RE.test(trimmed) || SPAN_CLOSE_RE.test(trimmed)) return raw;
+    }
+    const text = escapeHtml(raw);
     return token.block ? `<p>${text.replace(/\n/g, '<br>')}</p>` : text;
   },
 

@@ -3,7 +3,7 @@
   import { get } from 'svelte/store';
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { save as saveDialog } from '@tauri-apps/plugin-dialog';
-  import { activeTab, saveState, boxById, showHint, wordCount } from '../lib/stores';
+  import { activeTab, saveState, boxById, showHint, wordCount, editorSel } from '../lib/stores';
   import {
     initHistory,
     recordModification,
@@ -51,21 +51,46 @@
    */
   let tabSeq = 0;
 
+  /**
+   * 写入序号与串行队列。
+   *
+   * 自动保存（1.2s 去抖）与切换标签/关窗时的 flush 会并发触发写盘；此前没有排序，
+   * 两次 IPC 的完成顺序不保证，先发起的旧内容可能后落盘，把新内容覆盖掉。
+   * 现在所有写入串行执行（盘上的最后一次一定是最新排队的），且只有**最新序号**
+   * 才允许更新保存基线与状态栏，旧写入不会把「已保存」倒拨回去。
+   */
+  let writeSeq = 0;
+  let writeChain: Promise<void> = Promise.resolve();
+
   /** 只负责写盘与基线更新，返回是否写成功 */
   async function write(key: string, md: string): Promise<boolean> {
     const [boxId, noteId] = key.split('/');
     if (!boxId || !noteId) return false;
+
+    const seq = ++writeSeq;
     saveState.set('saving');
-    try {
-      await api.writeNote(boxId, noteId, md);
-      if (activeKey === key) savedMdRef = md;
-      saveState.set('saved');
-      return true;
-    } catch (e) {
-      saveState.set('error');
-      showHint(`保存失败：${errMsg(e)}`);
-      return false;
-    }
+    let ok = true;
+
+    writeChain = writeChain.then(async () => {
+      try {
+        await api.writeNote(boxId, noteId, md);
+        if (seq === writeSeq) {
+          if (activeKey === key) savedMdRef = md;
+          saveState.set('saved');
+        }
+      } catch (e) {
+        ok = false;
+        // 只有最新一次写入失败才报错，避免旧请求的失败覆盖掉已成功的新状态
+        if (seq === writeSeq) {
+          saveState.set('error');
+          showHint(`保存失败：${errMsg(e)}`);
+        }
+      }
+    });
+
+    await writeChain;
+    // 只有最新一次写入才算「这次保存成功」：旧写入不该再产生修改历史记录
+    return ok && seq === writeSeq;
   }
 
   /** 保存一次内容并计入修改历史（内容与已保存的一致时什么都不做） */
@@ -80,6 +105,8 @@
   /** 把编辑器当前内容写回后端；上下文由参数显式给出，不读全局 */
   async function flush(key: string, ed: EditorInstance | null): Promise<void> {
     if (!ed || !key) return;
+    // 丢弃排队中的去抖保存：它携带的是更早的内容，若在 flush 之后入队会覆盖新内容
+    ed.cancelPendingSave();
     await saveContent(key, ed.getMarkdown());
   }
 
@@ -112,6 +139,7 @@
     editor = null;
     activeKey = '';
     wordCount.set(null);
+    editorSel.set({ heading: 0, fontSize: null });
     publishHistoryState('');
     if (oldEditor) {
       try {
@@ -364,7 +392,7 @@
   <div class="editor-body">
     <div class="editor-wrap">
       <div class="editor-main">
-        <div bind:this={container} class="editor-container"></div>
+        <div bind:this={container} class="editor-container prose"></div>
         {#if loading}
           <div class="loading-hint">载入中…</div>
         {/if}
